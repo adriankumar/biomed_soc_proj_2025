@@ -328,6 +328,10 @@ class ServoView:
         load_button = ttk.Button(file_frame, text="Load Sequence", style="Bold.TButton")
         load_button.pack(side="left", padx=5)
         
+        #plot button to toggle sequence plot
+        plot_button = ttk.Button(file_frame, text="Plot Sequence", state="disabled", style="Bold.TButton")
+        plot_button.pack(side="left", padx=5)
+
         #sequence display (state, servos:angle, delay)
         display_frame = ttk.LabelFrame(sequence_frame, text="Recorded Steps", style="Title.TLabelframe")
         display_frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -373,7 +377,8 @@ class ServoView:
             "load_button": load_button,
             "remove_button": remove_step_button,
             "step_tree": self.step_tree,
-            "delay_spinbox": delay_spinbox
+            "delay_spinbox": delay_spinbox,
+            "plot_button": plot_button
         }
     
     #display console log
@@ -431,8 +436,8 @@ class ServoView:
     
     #controlling playback buttons depending on if there is a current sequence or not
     def update_playback_controls(self, is_playing, has_sequence):
-        """Update playback control buttons state"""
         self.play_button.config(state="disabled" if is_playing else ("normal" if has_sequence else "disabled"))
         self.record_button.config(state="disabled" if is_playing else "normal")
         self.clear_button.config(state="disabled" if is_playing else ("normal" if has_sequence else "disabled"))
         self.stop_button.config(state="normal" if is_playing else "disabled")
+        self.sequence_components["plot_button"].config(state="disabled" if is_playing else ("normal" if has_sequence else "disabled"))

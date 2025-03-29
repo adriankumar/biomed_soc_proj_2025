@@ -7,6 +7,7 @@ import time
 
 from servo_model import ServoModel
 from servo_view import ServoView
+from servo_sequence_plot import ServoSequencePlot
 
 class ServoController:
     def __init__(self, root):
@@ -29,6 +30,8 @@ class ServoController:
         
         #for throttling updates
         self.update_timers = {}
+
+        self.sequence_plot = None
         
         #set up event handlers
         self.setup_connection_handlers()
@@ -69,6 +72,7 @@ class ServoController:
         components["save_button"].config(command=self.save_sequence)
         components["load_button"].config(command=self.load_sequence)
         components["remove_button"].config(command=self.remove_step)
+        components["plot_button"].config(command=self.toggle_sequence_plot)
     
     #handler for finding ports
     def find_available_ports(self):
@@ -209,6 +213,9 @@ class ServoController:
             #update button states
             has_sequence = self.model.get_sequence_length() > 0
             self.view.update_playback_controls(False, has_sequence)
+        
+        if self.sequence_plot:
+            self.sequence_plot.update() #update sequence plot
     
     #removing selected step/state in the current sequence
     def remove_step(self):
@@ -228,7 +235,21 @@ class ServoController:
             #update button states
             has_sequence = self.model.get_sequence_length() > 0
             self.view.update_playback_controls(False, has_sequence)
+
+        if self.sequence_plot:
+            self.sequence_plot.update() #update sequence plot
     
+    #toggle sequence plot window
+    def toggle_sequence_plot(self):
+        if not self.model.sequence:
+            messagebox.showinfo("Info", "No sequence to plot")
+            return
+            
+        if self.sequence_plot is None:
+            self.sequence_plot = ServoSequencePlot(self.view.root, self.model)
+        
+        self.sequence_plot.show()
+
     #send the sequence signals to serial
     def play_sequence(self):
         if not self.model.sequence:
@@ -341,6 +362,9 @@ class ServoController:
             self.model.clear_sequence()
             self.view.update_sequence_display([])
             self.view.update_playback_controls(False, False)
+
+        if self.sequence_plot:
+            self.sequence_plot.update() #update sequence plot
     
     #save current sequence to json file
     def save_sequence(self):
@@ -359,26 +383,30 @@ class ServoController:
     
     #load in selected json file
     def load_sequence(self):
-            file_path = filedialog.askopenfilename(
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-                title="Load Sequence"
-            )
+        
+        file_path = filedialog.askopenfilename(
+        filetypes=[("JSON files", "*.json"), 
+                   ("All files", "*.*")], 
+                   title="Load Sequence")
             
-            if self.model.load_sequence(file_path):
-                self.view.update_sequence_display(self.model.sequence)
-                self.view.update_playback_controls(False, self.model.get_sequence_length() > 0)
+        if self.model.load_sequence(file_path):
+            self.view.update_sequence_display(self.model.sequence)
+            self.view.update_playback_controls(False, self.model.get_sequence_length() > 0)
                 
-                #check for servo configuration mismatch
-                sequence_servo_ids = set()
-                for step in self.model.sequence:
-                    for servo in step["servos"]:
-                        sequence_servo_ids.add(servo["id"])
+            #check for servo configuration mismatch
+            sequence_servo_ids = set()
+            for step in self.model.sequence:
+                for servo in step["servos"]:
+                    sequence_servo_ids.add(servo["id"])
                 
-                current_servo_ids = {servo["id"] for servo in self.servos}
+            current_servo_ids = {servo["id"] for servo in self.servos}
                 
-                if sequence_servo_ids != current_servo_ids:
-                    messagebox.showwarning(
-                        "Servo Configuration Mismatch",
-                        "The loaded sequence contains servos that don't match the current configuration. " +
-                        "Playback may not work as expected."
+            if sequence_servo_ids != current_servo_ids:
+                messagebox.showwarning(
+                    "Servo Configuration Mismatch",
+                    "The loaded sequence contains servos that don't match the current configuration. " +
+                    "Playback may not work as expected."
                     )
+                
+        if self.sequence_plot:
+            self.sequence_plot.update() #update sequence plot
