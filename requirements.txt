@@ -1,0 +1,4 @@
+pipreqs
+matplotlib
+numpy
+pyserial
