@@ -1,4 +1,10 @@
+# General-purpose libraries
+numpy               # Numerical computations
+matplotlib          # Plotting and visualization
+
+# communication proticals
+pyserial            # Serial communication (e.g., UART, RS232)
+smbus2              # I2C communication
+
+# the thing that generates new requirements.txt
 pipreqs
-matplotlib
-numpy
-pyserial
