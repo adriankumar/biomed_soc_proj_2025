@@ -1,13 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import json
-import os
-import sys
+
 
 class ConfigSetup:
     #default settings
-    DEFAULT_NUM_SERVOS = 3
-    DEFAULT_GLOBAL_SF = 0.0
+    DEFAULT_NUM_SERVOS = 1
+    DEFAULT_GLOBAL_SF = 1.0 #1 means no smoothing factor
     
     def __init__(self):
         #app settings variables
