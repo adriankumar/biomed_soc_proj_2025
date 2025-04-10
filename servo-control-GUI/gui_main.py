@@ -32,7 +32,7 @@ class ServoControlApp:
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill="both", expand=True)
         
-        #console log - create this first so it's available for logging
+        #create console log
         self._create_console_log(main_frame)
         
         #serial connection section
@@ -74,14 +74,14 @@ class ServoControlApp:
         #only if connection is established
         if self.serial_connection.is_connected:
             #send number of servos
-            self.send_serial_command(f"NUM_SERVOS:{self.num_servos}")
+            self.send_serial_command(f"NUM_SERVOS:{self.num_servos-1}")
             
             #send global smoothing factor
             self.send_serial_command(f"GSF:{self.global_sf}")
     
     def _create_console_log(self, parent):
         console_frame = ttk.LabelFrame(parent, text="Console Log")
-        console_frame.pack(fill="x", pady=5)
+        console_frame.pack(fill="x", side="bottom", pady=5)
         
         self.console = tk.Text(console_frame, height=6, width=50, state="disabled")
         self.console.pack(fill="x", padx=5, pady=5)
@@ -98,7 +98,7 @@ class ServoControlApp:
         #add message to console log
         self.console.config(state="normal")
         self.console.insert(tk.END, message + "\n")
-        # self.console.see(tk.END)
+        self.console.see(tk.END)
         self.console.config(state="disabled")
     
     def send_serial_command(self, command):

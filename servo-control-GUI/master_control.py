@@ -2,13 +2,15 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 class MasterControl:
-    def __init__(self, parent, send_command_callback=None, global_sf=0.5):
+    def __init__(self, parent, send_command_callback=None, global_sf=0.5, num_servos=5):
         #master control frame
         self.frame = ttk.LabelFrame(parent, text="Master Control")
         
         #callback for sending commands to serial
         self.send_command = send_command_callback
         
+        self.num_servos = num_servos
+
         #master angle value
         self.master_angle = tk.IntVar(value=90)
         
@@ -144,6 +146,7 @@ class MasterControl:
             self.smoothing_entry.insert(0, self.global_smoothing.get())
     
     def _update_smoothing(self):
+        settings_updated = False
         #get current value from entry
         try:
             factor = float(self.smoothing_entry.get())
@@ -156,13 +159,22 @@ class MasterControl:
                 #send command to update hardware
                 if self.send_command:
                     self.send_command(f"GSF:{factor}")
-                    messagebox.showinfo("Updated", f"Smoothing factor set to {factor}")
+                    # messagebox.showinfo("Updated", f"Smoothing factor set to {factor}")
+                    settings_updated = True
             else:
                 raise ValueError("Smoothing factor must be between 0.0 and 1.0")
+            
         except ValueError as e:
             messagebox.showwarning("Invalid Input", str(e))
             self.smoothing_entry.delete(0, tk.END)
             self.smoothing_entry.insert(0, str(self.global_smoothing.get()))
+
+        if self.send_command:
+            self.send_command(f"NUM_SERVOS:{self.num_servos}")
+            settings_updated = True 
+
+        if settings_updated:
+            messagebox.showinfo("Updated", f"Settings sent: GSF={self.global_smoothing.get()}, NUM_SERVOS={self.num_servos}")
     #-----------------------------------------------------------------------
     #public methods
     #-----------------------------------------------------------------------

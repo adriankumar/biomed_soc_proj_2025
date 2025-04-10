@@ -29,7 +29,8 @@ class SingleControls:
         self.master_control = MasterControl(
             self.frame, 
             send_command_callback=self._handle_master_command,
-            global_sf=global_sf
+            global_sf=global_sf,
+            num_servos=self.num_servos
         )
         self.master_control.frame.pack(fill="x", padx=10, pady=5)
     
