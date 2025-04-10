@@ -1,0 +1,113 @@
+current changes
+# Summary of Servo Control GUI Refactoring
+
+## Overview
+
+This refactoring replaced the simple smoothing factor-based servo movement with sophisticated Bezier curve-based motion control. The new system provides precise velocity control by defining keyframes with control points, allowing for more natural, adjustable motion curves between servo positions.
+
+## Modified Files
+
+1. **ESP32 Arduino Code** (`esp_code_accomodating_velocity.ino`)
+   - Removed the Global Smoothing Factor (GSF) and associated smoothing logic
+   - Added Bezier curve data structures and calculations
+   - Implemented sequence playback using keyframes and control points
+   - Added new serial commands for sequence loading and playback
+
+2. **config_setup.py**
+   - Removed all UI elements and variables related to Global Smoothing Factor
+   - Simplified configuration parameters to just number of servos
+
+3. **gui_main.py**
+   - Removed Global Smoothing Factor initialization and commands
+   - Updated initialization of components to remove GSF parameters
+
+4. **master_control.py**
+   - Removed the smoothing control frame and associated widgets
+   - Removed Global Smoothing Factor variable and command sending
+   - Updated the update button to only manage NUM_SERVOS
+
+5. **single_controls.py**
+   - Removed GSF parameter from initialization
+   - Updated MasterControl instantiation to remove GSF
+   - Removed passing of smoothing commands
+
+6. **sequence_recorder.py**
+   - Modified sequence data structure to support Bezier curve keyframes
+   - Updated the playback mechanism to use the new serial commands
+   - Added conversion functions between internal format and ESP32 format
+   - Implemented integration with the motion editor
+   - Added support for control points in sequence recording
+
+7. **servo_motion_editor.py** (completely new)
+   - Implemented a Matplotlib-based editor for Bezier curve motion profiles
+   - Added interactive controls for adjusting keyframes and control points
+   - Implemented real-time visualization of motion curves
+   - Added servo selection/navigation and playback controls
+   - Implemented format conversion between editor and recorder
+
+## Final Data Structure for self.sequence in SequenceRecording
+
+The sequence data is now stored as a list of step dictionaries, where each step contains:
+
+```python
+self.sequence = [
+    # Step 0
+    {
+        'time': 0,                 # Absolute time from sequence start in ms
+        'delay': 500,              # Delay until next step starts
+        'servos': [                # List of servo states at this step
+            {
+                'id': 0,           # Servo ID
+                'position': 90.0,  # Angle value
+                'angle': 90.0,     # Duplicate for compatibility
+                'cp_in': None,     # No incoming control point for first keyframe
+                'cp_out': {        # Outgoing control point (relative to keyframe)
+                    'dt': 165.0,   # Delta time in ms
+                    'da': 0.0      # Delta angle in degrees
+                }
+            },
+            # ... more servos
+        ]
+    },
+    # Step 1
+    {
+        'time': 500,               # Time = previous time + previous delay
+        'delay': 500,
+        'servos': [
+            {
+                'id': 0,
+                'position': 120.0,
+                'angle': 120.0,
+                'cp_in': {         # Incoming control point
+                    'dt': -165.0,  # Negative dt means before the keyframe
+                    'da': 0.0
+                },
+                'cp_out': {        # Outgoing control point
+                    'dt': 165.0,   # Positive dt means after the keyframe
+                    'da': -5.0
+                }
+            },
+            # ... more servos
+        ]
+    },
+    # ... more steps
+]
+```
+
+## Final Serial Command Set
+
+1. **Retained Commands:**
+   - `NUM_SERVOS:{num_servos}`: Sets the number of active servos
+   - `MA:{angle}`: Sets the master angle for all active servos
+   - `SA:{servo_id}:{angle}`: Sets the angle for a specific servo
+   - `STOP`: Stops all playback and motion
+
+2. **New Commands:**
+   - `CLEAR_ALL`: Clears all loaded sequences from the ESP's memory
+   - `LOAD_SEQ:{servo_id}:{keyframe_string}`: Loads a keyframe sequence for a single servo
+     - Format: `time,angle,in_dt,in_da,out_dt,out_da;time,angle,in_dt,in_da,out_dt,out_da;...`
+   - `PLAY_SERVO:{servo_id}`: Starts playback of the loaded sequence for a specific servo
+   - `PLAY_LOADED`: Starts simultaneous playback of all loaded sequences
+
+3. **Removed Commands:**
+   - `GSF:{smoothing_factor}`: The Global Smoothing Factor command is removed

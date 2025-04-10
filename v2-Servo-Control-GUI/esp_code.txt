@@ -1,0 +1,617 @@
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+#include <vector> // for std::vector
+#include <map> // for std::map
+#include <string> // for std::string manipulation
+
+// Create PCA9685 object with default I2C address (0x40)
+Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
+
+// Servo configuration
+#define SERVO_MIN 150   // Pulse for 0 degrees
+#define SERVO_MAX 600   // Pulse for 180 degrees
+#define PWM_FREQ 50     // 50Hz frequency for servos
+#define MAX_SERVOS 32   // Maximum number of servos
+
+// I2C pin configuration
+#define SDA_PIN 21
+#define SCL_PIN 47
+
+// Update interval for servo position calculations
+const int UPDATE_INTERVAL_MS = 10;  // Update every 10ms (100Hz)
+unsigned long lastUpdateTime = 0;
+
+// -- Data Structures --
+struct ControlPoint {
+    float dt = 0.0;   // Delta time relative to keyframe
+    float da = 0.0;   // Delta angle relative to keyframe
+    bool exists = false; // Flag if this control point is valid
+};
+
+struct Keyframe {
+    unsigned long time = 0; // Absolute time in milliseconds
+    float angle = 90.0;     // Target angle in degrees
+    ControlPoint cp_in;
+    ControlPoint cp_out;
+};
+
+// Struct to hold the four control points for Bezier calculation
+struct BezierPoints {
+    float p0_time, p0_angle;
+    float p1_time, p1_angle;
+    float p2_time, p2_angle;
+    float p3_time, p3_angle;
+};
+
+// Map to store sequence data: servo_id -> vector of Keyframes
+std::map<int, std::vector<Keyframe>> g_sequences;
+uint8_t g_activeNumServos = 5; // Default active servos, updated by NUM_SERVOS
+
+// -- Playback State --
+enum PlaybackState { IDLE, PLAYING };
+PlaybackState g_playbackState = IDLE;
+
+struct ServoPlaybackInfo {
+    PlaybackState state = IDLE;
+    int currentSegment = 0;         // Index of the segment being played
+    unsigned long segmentStartTime = 0; // millis() when the current segment started
+    float currentAngle = 90.0;        // Current calculated angle
+    bool playingAll = false;          // Is this servo part of a PLAY_ALL command?
+};
+std::map<int, ServoPlaybackInfo> g_playbackInfo; // servo_id -> playback info
+
+// Command parsing
+String inputBuffer = "";
+bool commandComplete = false;
+
+void setup() {
+    // Initialize serial communication
+    Serial.begin(115200);
+    delay(1000);
+    Serial.println("Servo Control System Starting...");
+    
+    // Initialize I2C
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Serial.print("I2C started on SDA=");
+    Serial.print(SDA_PIN);
+    Serial.print(", SCL=");
+    Serial.println(SCL_PIN);
+    
+    // Initialize the PCA9685 board
+    if (!pca.begin()) {
+        Serial.println("PCA9685 initialization failed!");
+        while (1); // Halt if PCA9685 not found
+    }
+    
+    // Set the PWM frequency for servo operation
+    pca.setPWMFreq(PWM_FREQ);
+    Serial.println("PCA9685 initialized with PWM frequency of 50Hz");
+    
+    // Initialize all servos to middle position (90 degrees)
+    for (uint8_t i = 0; i < g_activeNumServos; i++) {
+        pca.setPWM(i, 0, angleToPulse(90));
+        if (!g_playbackInfo.count(i)) {
+            g_playbackInfo[i] = { IDLE, 0, 0, 90.0, false };
+        }
+    }
+    
+    Serial.print("System initialized with ");
+    Serial.print(g_activeNumServos);
+    Serial.println(" active servos");
+    Serial.println("Ready for commands");
+}
+
+void loop() {
+    // Read and process serial commands
+    readSerialCommands();
+    
+    // Process completed commands
+    if (commandComplete) {
+        processCommand(inputBuffer);
+        inputBuffer = "";
+        commandComplete = false;
+    }
+    
+    // Update servo positions based on playback state
+    unsigned long currentTime = millis();
+    if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
+        lastUpdateTime = currentTime;
+        updatePlayback(currentTime);
+    }
+}
+
+void readSerialCommands() {
+    while (Serial.available() > 0 && !commandComplete) {
+        char inChar = (char)Serial.read();
+        
+        if (inChar == '\n') {
+            commandComplete = true;
+        } 
+        else if (inChar != '\r') {
+            inputBuffer += inChar;
+        }
+    }
+}
+
+void processCommand(String command) {
+    // Trim whitespace
+    command.trim();
+    
+    // Check for empty command
+    if (command.length() == 0) {
+        return;
+    }
+    
+    // Handle special case commands without parameters
+    if (command.equals("STOP")) {
+        stopAllPlayback();
+        Serial.println("STOP command received - playback halted.");
+        return;
+    }
+    if (command.equals("CLEAR_ALL")) {
+        clearAllSequences();
+        return;
+    }
+    if (command.equals("PLAY_LOADED")) {
+        startPlaybackAll();
+        return;
+    }
+    
+    // Parse command by finding the command type before the first colon
+    int firstColon = command.indexOf(':');
+    if (firstColon <= 0) {
+        Serial.println("Invalid command format");
+        return;
+    }
+    
+    String cmdType = command.substring(0, firstColon);
+    String payload = (firstColon == command.length() - 1) ? "" : command.substring(firstColon + 1);
+    
+    // Handle each command type
+    if (cmdType.equals("NUM_SERVOS")) {
+        setNumServos(payload.toInt());
+    }
+    else if (cmdType.equals("MA")) {
+        stopAllPlayback(); // Stop playback when setting master angle
+        setMasterAngle(payload.toFloat());
+    }
+    else if (cmdType.equals("SA")) {
+        // Parse "servo_id:angle"
+        int secondColon = payload.indexOf(':');
+        if (secondColon > 0) {
+            int servoId = payload.substring(0, secondColon).toInt();
+            float angle = payload.substring(secondColon + 1).toFloat();
+            
+            stopAllPlayback(); // Stop playback when setting single angle
+            setServoAngle(servoId, angle);
+        } else {
+            Serial.println("Invalid SA format. Expected SA:servo_id:angle");
+        }
+    }
+    else if (cmdType.equals("LOAD_SEQ")) {
+        // Parse "servo_id:keyframes_string"
+        int secondColon = payload.indexOf(':');
+        if (secondColon > 0) {
+            int servoId = payload.substring(0, secondColon).toInt();
+            String kfString = payload.substring(secondColon + 1);
+            loadSequenceFromString(servoId, kfString);
+        } else {
+            Serial.println("Invalid LOAD_SEQ format. Expected LOAD_SEQ:servo_id:data");
+        }
+    }
+    else if (cmdType.equals("PLAY_SERVO")) {
+        startPlaybackSingle(payload.toInt());
+    }
+    else {
+        Serial.print("Unknown command type: ");
+        Serial.println(cmdType);
+    }
+}
+
+void setNumServos(int numServos) {
+    // Validate range
+    if (numServos > 0 && numServos <= MAX_SERVOS) {
+        g_activeNumServos = numServos;
+        
+        Serial.print("Number of active servos set to ");
+        Serial.println(g_activeNumServos);
+    } else {
+        Serial.print("Invalid number of servos. Valid range: 1-");
+        Serial.println(MAX_SERVOS);
+    }
+}
+
+void setMasterAngle(float angle) {
+    // Validate angle range
+    if (angle >= 0 && angle <= 180) {
+        for (uint8_t i = 0; i < g_activeNumServos; i++) {
+            // Set servo directly - bypasses playback/smoothing
+            uint16_t pulse = angleToPulse(angle);
+            pca.setPWM(i, 0, pulse);
+            
+            // Update playback info to reflect immediate state change
+            if (g_playbackInfo.count(i)) {
+                g_playbackInfo[i].currentAngle = angle;
+                g_playbackInfo[i].state = IDLE; // Ensure playback stops
+            } else {
+                // If servo wasn't in playback map, add it
+                g_playbackInfo[i] = { IDLE, 0, 0, angle, false };
+            }
+        }
+        
+        Serial.print("All active servos set to ");
+        Serial.println(angle);
+    } else {
+        Serial.println("Invalid angle value. Must be between 0 and 180");
+    }
+}
+
+void setServoAngle(int servoId, float angle) {
+    // Validate servo ID and angle
+    if (servoId >= 0 && servoId < g_activeNumServos && angle >= 0 && angle <= 180) {
+        // Set servo directly
+        uint16_t pulse = angleToPulse(angle);
+        pca.setPWM(servoId, 0, pulse);
+        
+        // Update playback info
+        if (g_playbackInfo.count(servoId)) {
+            g_playbackInfo[servoId].currentAngle = angle;
+            g_playbackInfo[servoId].state = IDLE;
+        } else {
+            g_playbackInfo[servoId] = { IDLE, 0, 0, angle, false };
+        }
+        
+        Serial.print("Servo ");
+        Serial.print(servoId);
+        Serial.print(" set to ");
+        Serial.println(angle);
+    } else {
+        if (servoId < 0 || servoId >= g_activeNumServos) {
+            Serial.print("Invalid servo ID. Valid range: 0-");
+            Serial.println(g_activeNumServos - 1);
+        } else {
+            Serial.println("Invalid angle value. Must be between 0 and 180");
+        }
+    }
+}
+
+void stopAllPlayback() {
+    for (auto it = g_playbackInfo.begin(); it != g_playbackInfo.end(); ++it) {
+        it->second.state = IDLE;
+    }
+    g_playbackState = IDLE; // Global state
+    Serial.println("All playback stopped");
+}
+
+void clearAllSequences() {
+    g_sequences.clear();
+    stopAllPlayback(); // Stop playback if clearing sequences
+    Serial.println("All stored sequences cleared.");
+}
+
+void loadSequenceFromString(int servoId, String data) {
+    if (servoId < 0 || servoId >= MAX_SERVOS) {
+        Serial.println("Invalid servo ID for LOAD_SEQ");
+        return;
+    }
+
+    std::vector<Keyframe> sequence;
+    
+    // Parse data string into keyframes
+    int start = 0;
+    int end = data.indexOf(';');
+    while (end != -1) {
+        String segment = data.substring(start, end);
+        if (!parseKeyframeSegment(segment, sequence)) return; // Stop if parsing fails
+        start = end + 1;
+        end = data.indexOf(';', start);
+    }
+    
+    // Handle last segment
+    String lastSegment = data.substring(start);
+    if (!lastSegment.isEmpty()) {
+        if (!parseKeyframeSegment(lastSegment, sequence)) return;
+    }
+
+    if (!sequence.empty()) {
+        g_sequences[servoId] = sequence; // Store the parsed sequence
+        
+        // Ensure playback info exists for this servo
+        if (!g_playbackInfo.count(servoId)) {
+            g_playbackInfo[servoId] = { IDLE, 0, 0, sequence[0].angle, false }; // Start at first kf angle
+        } else {
+            g_playbackInfo[servoId].currentAngle = sequence[0].angle; // Reset angle
+        }
+
+        Serial.print("Loaded sequence for servo ");
+        Serial.print(servoId);
+        Serial.print(" with ");
+        Serial.print(sequence.size());
+        Serial.println(" keyframes.");
+    } else {
+        Serial.print("LOAD_SEQ Error: No valid keyframes parsed for servo ");
+        Serial.println(servoId);
+    }
+}
+
+bool parseKeyframeSegment(String segment, std::vector<Keyframe>& sequence) {
+    Keyframe kf;
+    int paramIndex = 0;
+    int p_start = 0;
+    int p_end = segment.indexOf(',');
+
+    while (p_end != -1 || p_start < segment.length()) { // Handle last parameter
+        String param;
+        if (p_end != -1) {
+            param = segment.substring(p_start, p_end);
+        } else {
+            param = segment.substring(p_start); // Last parameter
+        }
+        param.trim(); // Trim whitespace
+
+        // Attempt to parse based on index
+        try {
+            switch (paramIndex) {
+                case 0: kf.time = param.toInt(); break; // time
+                case 1: kf.angle = constrain(param.toFloat(), 0, 180); break; // angle
+                case 2: 
+                    if (param.length() > 0) { 
+                        kf.cp_in.dt = param.toFloat(); 
+                        kf.cp_in.exists = true; 
+                    } 
+                    break;
+                case 3: 
+                    if (param.length() > 0) { 
+                        kf.cp_in.da = param.toFloat(); 
+                        kf.cp_in.exists = true; 
+                    } 
+                    break;
+                case 4: 
+                    if (param.length() > 0) { 
+                        kf.cp_out.dt = param.toFloat(); 
+                        kf.cp_out.exists = true; 
+                    } 
+                    break;
+                case 5: 
+                    if (param.length() > 0) { 
+                        kf.cp_out.da = param.toFloat(); 
+                        kf.cp_out.exists = true; 
+                    } 
+                    break;
+            }
+        } catch (const std::exception& e) { 
+            Serial.print("LOAD_SEQ Param Parse Error: ");
+            Serial.println(paramIndex);
+            Serial.print("Param Value: '");
+            Serial.print(param);
+            Serial.println("'");
+            return false; // Indicate failure
+        }
+        paramIndex++;
+
+        if (p_end == -1) break; // Exit after processing last parameter
+
+        p_start = p_end + 1;
+        p_end = segment.indexOf(',', p_start);
+    }
+
+    // Basic validation
+    if (paramIndex >= 2) { // Must have at least time and angle
+        kf.angle = constrain(kf.angle, 0, 180); // Ensure angle is valid
+        sequence.push_back(kf);
+        return true; // Indicate success
+    } else {
+        Serial.println("LOAD_SEQ Parse Error: Incomplete keyframe data.");
+        return false; // Indicate failure
+    }
+}
+
+void startPlaybackSingle(int servoId) {
+    if (!g_sequences.count(servoId) || g_sequences[servoId].size() < 2) {
+        Serial.print("Cannot play servo ");
+        Serial.print(servoId);
+        Serial.println(": No sequence loaded or not enough keyframes.");
+        return;
+    }
+    
+    stopAllPlayback(); // Stop any other playback first
+
+    // Ensure playback info exists and reset it
+    unsigned long startTime = millis();
+    float startAngle = g_sequences[servoId][0].angle;
+    
+    if (!g_playbackInfo.count(servoId)){
+        g_playbackInfo[servoId] = { PLAYING, 0, startTime, startAngle, false };
+    } else {
+        g_playbackInfo[servoId].state = PLAYING;
+        g_playbackInfo[servoId].currentSegment = 0;
+        g_playbackInfo[servoId].segmentStartTime = startTime;
+        g_playbackInfo[servoId].playingAll = false; // Mark as single playback
+    }
+
+    g_playbackState = PLAYING; // Set global state
+
+    Serial.print("Starting playback for servo ");
+    Serial.println(servoId);
+}
+
+void startPlaybackAll() {
+    if (g_sequences.empty()) {
+        Serial.println("Cannot PLAY_LOADED: No sequences loaded.");
+        return;
+    }
+    
+    stopAllPlayback(); // Stop previous state
+
+    bool anySequenceStarted = false;
+    unsigned long currentTime = millis();
+    
+    for (auto const& [servoId, seq] : g_sequences) {
+        if (servoId < g_activeNumServos && seq.size() >= 2) { // Only play active servos with enough keyframes
+            float startAngle = seq[0].angle;
+            
+            // Ensure playback info exists and reset it
+            if (!g_playbackInfo.count(servoId)){
+                g_playbackInfo[servoId] = { PLAYING, 0, currentTime, startAngle, true };
+            } else {
+                g_playbackInfo[servoId].state = PLAYING;
+                g_playbackInfo[servoId].currentSegment = 0;
+                g_playbackInfo[servoId].segmentStartTime = currentTime;
+                g_playbackInfo[servoId].playingAll = true; // Mark as part of 'play all'
+            }
+            
+            anySequenceStarted = true;
+        }
+    }
+
+    if (anySequenceStarted) {
+        g_playbackState = PLAYING; // Set global state
+        Serial.println("Starting playback for all loaded sequences.");
+    } else {
+        Serial.println("No valid sequences found for active servos.");
+    }
+}
+
+bool getBezierPointsForSegment(int servoId, int segmentIndex, BezierPoints& points) {
+    if (!g_sequences.count(servoId)) return false;
+    const auto& sequence = g_sequences[servoId];
+    
+    // Use size_t for index comparison with vector size
+    if (segmentIndex < 0 || (size_t)segmentIndex >= sequence.size() - 1) return false;
+
+    const Keyframe& kf0 = sequence[segmentIndex];
+    const Keyframe& kf1 = sequence[segmentIndex + 1];
+
+    points.p0_time = kf0.time;
+    points.p0_angle = kf0.angle;
+    points.p3_time = kf1.time;
+    points.p3_angle = kf1.angle;
+
+    if (kf0.cp_out.exists) {
+        points.p1_time = kf0.time + kf0.cp_out.dt;
+        points.p1_angle = kf0.angle + kf0.cp_out.da;
+    } else {
+        float timeDiff = kf1.time - kf0.time;
+        float dt = (timeDiff > 0 ? timeDiff : 1) * 0.33; // Default 1/3 if exists not true
+        points.p1_time = kf0.time + dt;
+        points.p1_angle = kf0.angle;
+    }
+
+    if (kf1.cp_in.exists) {
+        points.p2_time = kf1.time + kf1.cp_in.dt;
+        points.p2_angle = kf1.angle + kf1.cp_in.da;
+    } else {
+        float timeDiff = kf1.time - kf0.time;
+        float dt = (timeDiff > 0 ? timeDiff : 1) * -0.33; // Default -1/3 if exists not true
+        points.p2_time = kf1.time + dt;
+        points.p2_angle = kf1.angle;
+    }
+
+    points.p1_angle = constrain(points.p1_angle, 0, 180);
+    points.p2_angle = constrain(points.p2_angle, 0, 180);
+    return true;
+}
+
+float bezierAngle(float t, const BezierPoints& p) {
+    t = constrain(t, 0.0, 1.0);
+    float u = 1.0 - t;
+    float tt = t * t;
+    float uu = u * u;
+    float uuu = uu * u;
+    float ttt = tt * t;
+    
+    float angle = uuu * p.p0_angle + 3 * uu * t * p.p1_angle + 3 * u * tt * p.p2_angle + ttt * p.p3_angle;
+    return constrain(angle, 0, 180);
+}
+
+void updatePlayback(unsigned long currentTime) {
+    if (g_playbackState != PLAYING) return;
+
+    bool anyServoStillPlaying = false;
+
+    for (auto it = g_playbackInfo.begin(); it != g_playbackInfo.end(); ++it) {
+        int servoId = it->first;
+        ServoPlaybackInfo& info = it->second;
+
+        if (info.state != PLAYING) continue;
+
+        if (!g_sequences.count(servoId)) { 
+            info.state = IDLE; 
+            continue; 
+        }
+        
+        const auto& sequence = g_sequences[servoId];
+        
+        // Use size_t for comparison
+        if (info.currentSegment >= (int)sequence.size() - 1) { 
+            info.state = IDLE; 
+            continue; 
+        }
+
+        BezierPoints points;
+        if (!getBezierPointsForSegment(servoId, info.currentSegment, points)) {
+            Serial.print("Error getting Bezier points for Servo ");
+            Serial.print(servoId);
+            Serial.print(" Segment ");
+            Serial.println(info.currentSegment);
+            info.state = IDLE;
+            continue;
+        }
+
+        unsigned long segmentStartTimeMs = info.segmentStartTime;
+        // Keyframe times define segment start/end for interpolation 't'
+        unsigned long segmentStartKeyframeTime = points.p0_time;
+        unsigned long segmentEndKeyframeTime = points.p3_time;
+        // Use the actual duration based on keyframe times for 't' calculation
+        long segmentDuration = (long)segmentEndKeyframeTime - (long)segmentStartKeyframeTime;
+
+        // Check for zero or negative duration
+        if (segmentDuration <= 0) {
+            info.currentAngle = points.p3_angle; // Move to end angle
+        } else {
+            // Calculate 't' based on elapsed time SINCE THE SEGMENT WAS STARTED on the microcontroller clock
+            unsigned long elapsedSinceSegmentStart = currentTime - segmentStartTimeMs;
+            float t = (float)elapsedSinceSegmentStart / (float)segmentDuration;
+            t = constrain(t, 0.0, 1.0);
+            info.currentAngle = bezierAngle(t, points);
+        }
+
+        // Always send update during playback
+        pca.setPWM(servoId, 0, angleToPulse(info.currentAngle));
+
+        // Check if segment time (based on keyframe times) has elapsed based on microcontroller clock
+        if (currentTime >= segmentStartTimeMs + segmentDuration) {
+            info.currentSegment++;
+            // Use size_t for comparison
+            if (info.currentSegment >= (int)sequence.size() - 1) {
+                info.state = IDLE;
+                info.currentAngle = points.p3_angle; // Ensure final angle
+                pca.setPWM(servoId, 0, angleToPulse(info.currentAngle)); // Send final position
+                Serial.print("Servo ");
+                Serial.print(servoId);
+                Serial.println(" finished sequence.");
+            } else {
+                // Start next segment immediately using current time
+                info.segmentStartTime = currentTime;
+                // Angle calculation will happen in the next updatePlayback call
+            }
+        }
+
+        if (info.state == PLAYING) {
+            anyServoStillPlaying = true;
+        }
+    } // End loop through servos
+
+    if (!anyServoStillPlaying) {
+        g_playbackState = IDLE;
+        Serial.println("All playback finished.");
+    }
+}
+
+uint16_t angleToPulse(float angle) {
+    // Ensure angle is within 0-180 range
+    angle = constrain(angle, 0, 180);
+    
+    // Map angle to pulse width
+    return map(round(angle), 0, 180, SERVO_MIN, SERVO_MAX);
+}
