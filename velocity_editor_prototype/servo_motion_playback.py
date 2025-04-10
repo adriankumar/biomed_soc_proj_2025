@@ -370,6 +370,8 @@ class ServoMotionEditor:
                  print(f"set servo {self.current_servo_id} kf {self.selected_kf_index} angle to {new_angle}")
                  self.update_plot_for_current_servo() #redraw plot fully
                  self.angle_textbox.set_val(str(new_angle)) #update display
+                 send_serial_command(f"SA:{self.current_servo_id}:{new_angle}")
+                 time.sleep(0.1)
                  #removed real-time SA command: send_serial_command(f"SA:{self.current_servo_id}:{new_angle}")
             else: self.clear_selection()
         except ValueError: self._restore_textbox_values()
@@ -447,7 +449,7 @@ class ServoMotionEditor:
         #--- full redraw: clear elements, reset axes, redraw everything ---
         self.clear_plot_elements() #clear old artists
         self.setup_plot() #reapply static axes properties (labels, grid, ylim)
-        self.ax.set_title(f"servo motion editor - servo id: {self.current_servo_id} (use 'n'/'p' to switch)") #update title
+        self.ax.set_title(f"servo motion editor - servo id: {self.current_servo_id} (use 'n'/b' to switch)") #update title
 
         sequence = self.get_current_sequence()
         #handle selection persistence/update textbox values if selection is still valid
@@ -554,7 +556,7 @@ class ServoMotionEditor:
         if event.key == 'n': #next servo
              next_index = (current_index + 1) % num_servos
              new_servo_id = self.servo_ids[next_index]
-        elif event.key == 'p': #previous servo
+        elif event.key == 'b': #previous servo
              prev_index = (current_index - 1 + num_servos) % num_servos
              new_servo_id = self.servo_ids[prev_index]
 
