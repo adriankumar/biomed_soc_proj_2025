@@ -5,12 +5,14 @@ import serial.tools.list_ports
 import time
 
 class SerialConnection:
-    def __init__(self, parent, send_callback=None):
+    def __init__(self, parent, send_callback=None, num_servos=5):
         #create the main frame
         self.frame = ttk.LabelFrame(parent, text="Serial Connection")
         
         #callback for logging - all serial connection stuff will be logged in the console i.e connections, error etc.
         self.send_callback = send_callback
+
+        self.num_servos = num_servos
         
         #connection state
         self.serial_connection = None #serial object that communicates to actual port
@@ -118,6 +120,8 @@ class SerialConnection:
             #notify callback if provided
             if self.send_callback:
                 self.send_callback(f"Connected to {selected_port}")
+
+            self.send_command(f"NUM_SERVOS:{self.num_servos}") #send num servos everytime we connect to serial
             
             return True
             

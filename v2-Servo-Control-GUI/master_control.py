@@ -52,14 +52,6 @@ class MasterControl:
                   command=self._decrement_angle).pack(side="left")
         ttk.Button(value_frame, text="+", width=2,
                   command=self._increment_angle).pack(side="left")
-        
-        #REMOVE
-        update_frame = ttk.Frame(self.frame)
-        update_frame.pack(fill="x", padx=10, pady=5)
-        
-        self.update_button = ttk.Button(update_frame, text="Update NUM_SERVOS", 
-                                       command=self._update_settings)
-        self.update_button.pack(side="left", padx=5)
     
     #-----------------------------------------------------------------------
     #event handlers
@@ -110,13 +102,6 @@ class MasterControl:
         if current > 0:
             self.master_angle.set(current - 1)
             self._on_slider_changed()
-    
-    #REMOVE
-    def _update_settings(self):
-        # Send NUM_SERVOS command
-        if self.send_command:
-            self.send_command(f"NUM_SERVOS:{self.num_servos}")
-            messagebox.showinfo("Updated", f"Settings sent: NUM_SERVOS={self.num_servos}")
     
 #-----------------------------------------------------------------------
 #optional method incase we want to set the angle without sending command to serial; not currently used

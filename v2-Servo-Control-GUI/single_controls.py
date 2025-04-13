@@ -56,6 +56,7 @@ class SingleControls:
         self.controls_frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
     
+    #need to implement fixed grid size of 5 x 6 for max 30 servos, then any n servos < 30 will fill in those fixed spaces in order, cos this scroll bar doesnt work lol
     def _on_frame_configure(self, event): #update scroll region when controls frame changes
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
@@ -182,10 +183,6 @@ class SingleControls:
                     
             except (ValueError, IndexError):
                 pass
-                
-        elif self.send_command: #need to remove
-            # Pass through any other commands (like NUM_SERVOS)
-            self.send_command(command)
     
 # -----------------------------------------------------------------------
 # similar concept to the master control public method~ to set angle without sending serial command; currently not used

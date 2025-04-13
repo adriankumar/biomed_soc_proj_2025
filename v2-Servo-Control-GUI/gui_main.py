@@ -30,7 +30,8 @@ class ServoControlApp:
         #serial connection section
         self.serial_connection = SerialConnection(
             main_frame,
-            send_callback=self.log_message
+            send_callback=self.log_message,
+            num_servos=self.num_servos #pass num servos to serial connection
         )
         self.serial_connection.frame.pack(fill="x", pady=5)
         
@@ -45,7 +46,7 @@ class ServoControlApp:
         #may need to modify in future to a different window because displaying all 30 vertically can only be seen by wider screens....
         self.single_controls = SingleControls( 
             left_frame,
-            self.num_servos, #might make dynamic where we refresh the display everytime the user enters a servo num in serial connection area so display updates to those servos but may need to clear all recorded sequences for house keeping
+            self.num_servos,
             send_command_callback=self.send_serial_command
         )
         self.single_controls.frame.pack(fill="both", expand=True)
@@ -61,14 +62,14 @@ class ServoControlApp:
             send_command_callback=self.send_serial_command
         )
         self.sequence_recording.frame.pack(fill="both", expand=True)
-        
-        if self.serial_connection.is_connected: #need to remove this from create main ui and move to serial connnection
-            self.send_serial_command(f"NUM_SERVOS:{self.num_servos}")
     
-    #need to fix this display
     def _create_console_log(self, parent):
         console_frame = ttk.LabelFrame(parent, text="Console Log")
         console_frame.pack(fill="x", side="bottom", pady=5)
+
+        #prevent resizing when log is spammed
+        console_frame.pack_propagate(False)
+        console_frame.configure(height=150)
         
         self.console = tk.Text(console_frame, height=6, width=50, state="disabled")
         self.console.pack(fill="x", padx=5, pady=5)
