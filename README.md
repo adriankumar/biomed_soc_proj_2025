@@ -13,7 +13,7 @@
 
 
  **Future changes needed:**
- - Need to modify individual controls display: the scroll bar to individuall control n number of servos doesn't work so you can only individually control the servos you see; the current work around is to use the velocity editor and `add keyframes` to the current sequence or use the master control; potentially use a fixced 5 x 6 grid space since max servos allowed is 30 (can be changed in code but please note this down somewhere so we know)
+ - Need to modify individual controls display: the scroll bar for individual controlling of n number of servos doesn't work properly, so you can only individually control the servos you see in the display; the current work around is to use the velocity editor and `add keyframes` to the current sequence or use the master control; potentially use a fixed 5 x 6 grid space since max servos allowed is 30 (can be changed in code but please note this down somewhere so we know)
 - Add dynamic servo updating where we can update the number of servos to control/initialise while the gui is opened; will need to clear refresh any current information in the GUI for house keeping purposes
 
 **TO DO (adri):**
