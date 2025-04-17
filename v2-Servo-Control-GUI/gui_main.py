@@ -1,7 +1,5 @@
 import tkinter as tk
 from tkinter import ttk
-
-# Import our modules
 from serial_connection import SerialConnection
 from single_controls import SingleControls
 from sequence_recorder import SequenceRecording
@@ -9,54 +7,51 @@ from config_setup import run_config_setup
 
 class ServoControlApp:
     def __init__(self, root, config):
-        # Store configuration
         self.root = root
-        self.num_servos = config["num_servos"]
+        self.num_servos = config["num_servos"] #store num servos
         
-        # Setup the main window
+        #main window
         self.root.title("Servo Control System")
         self.root.geometry("1000x700")
-        
-        # Sequence dictionary for data persistence
-        self.sequence_dictionary = {}
-        
-        # Create main layout
-        self._create_main_ui()
+
+        self.sequence_dictionary = {} #sequence dictionary to be passed between files for modification
+        self._create_main_ui() #create layout
     
-    # -----------------------------------------------------------------------
-    # Main UI creation
-    # -----------------------------------------------------------------------
+    #-----------------------------------------------------------------------
+    #create main ui
+    #-----------------------------------------------------------------------
     def _create_main_ui(self):
-        # Create main content
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill="both", expand=True)
         
-        # Create console log
+        #create console log
         self._create_console_log(main_frame)
         
-        # Serial connection section
+        #serial connection section
         self.serial_connection = SerialConnection(
             main_frame,
-            send_callback=self.log_message
+            send_callback=self.log_message,
+            num_servos=self.num_servos #pass num servos to serial connection
         )
         self.serial_connection.frame.pack(fill="x", pady=5)
         
-        # Content area
+        #for splitting controls and sequence recording - may need to modify in future to a different window because displaying all 30 vertically can only be seen by wider screens....
         content_frame = ttk.Frame(main_frame)
         content_frame.pack(fill="both", expand=True, pady=5)
         
-        # Servo controls section (left side)
+        #servo slider controls
         left_frame = ttk.Frame(content_frame)
         left_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
         
-        self.single_controls = SingleControls(
+        #may need to modify in future to a different window because displaying all 30 vertically can only be seen by wider screens....
+        self.single_controls = SingleControls( 
             left_frame,
             self.num_servos,
             send_command_callback=self.send_serial_command
         )
         self.single_controls.frame.pack(fill="both", expand=True)
         
-        # Sequence controls section (right side)
+        #sequence recording controls
         right_frame = ttk.Frame(content_frame)
         right_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
         
@@ -67,16 +62,14 @@ class ServoControlApp:
             send_command_callback=self.send_serial_command
         )
         self.sequence_recording.frame.pack(fill="both", expand=True)
-          
-        # Send initial settings to hardware
-        # Only if connection is established
-        if self.serial_connection.is_connected:
-            # Send number of servos
-            self.send_serial_command(f"NUM_SERVOS:{self.num_servos}")
     
     def _create_console_log(self, parent):
         console_frame = ttk.LabelFrame(parent, text="Console Log")
         console_frame.pack(fill="x", side="bottom", pady=5)
+
+        #prevent resizing when log is spammed
+        console_frame.pack_propagate(False)
+        console_frame.configure(height=150)
         
         self.console = tk.Text(console_frame, height=6, width=50, state="disabled")
         self.console.pack(fill="x", padx=5, pady=5)
@@ -86,23 +79,21 @@ class ServoControlApp:
         
         self.console.config(yscrollcommand=scrollbar.set)
     
-    # -----------------------------------------------------------------------
-    # Utility methods
-    # -----------------------------------------------------------------------
-    def log_message(self, message):
-        # Add message to console log
+#-----------------------------------------------------------------------
+#utility methods: log, send_serial, get_current_servo_angles
+#-----------------------------------------------------------------------
+    def log_message(self, message): #add message to console log to record actions or debug statements via gui
         self.console.config(state="normal")
         self.console.insert(tk.END, message + "\n")
         self.console.see(tk.END)
         self.console.config(state="disabled")
     
-    def send_serial_command(self, command):
-        # Check connection
+    def send_serial_command(self, command): #send the serial commands (angles, sequences, playback, servos, etc)
         if not self.serial_connection.is_connected:
-            self.log_message("Error: Not connected to serial port")
+            self.log_message("Error: Not connected to serial port") #connect to serial port first
             return False
             
-        # Send command
+        #command is sent using serial connection's function which returns a boolean if it was successful or not
         result = self.serial_connection.send_command(command)
         
         if not result:
@@ -111,7 +102,6 @@ class ServoControlApp:
         return result
     
     def get_current_servo_angles(self):
-        # Collect all servo angles
         servo_positions = []
         
         for i in range(self.num_servos):
@@ -125,19 +115,15 @@ class ServoControlApp:
             
         return servo_positions
 
-# -----------------------------------------------------------------------
-# Application entry point
-# -----------------------------------------------------------------------
+#-----------------------------------------------------------------------
+# start config and gui set up if config applied
+#-----------------------------------------------------------------------
 if __name__ == "__main__":
-    # Run configuration setup first
-    config = run_config_setup()
+    config = run_config_setup() #run config (how many servos to initialise)
     
-    # Only proceed if configuration was applied
-    if config["config_applied"]:
-        # Create main application
+    if config["config_applied"]: #open gui control after num servos is specified
         root = tk.Tk()
-        app = ServoControlApp(root, config)
+        app = ServoControlApp(root, config) #pass config to get num of servos
         root.mainloop()
     else:
-        # User cancelled configuration, exit without creating main window
-        print("Configuration cancelled. Exiting application.")
+        print("Configuration cancelled. Exiting application")
