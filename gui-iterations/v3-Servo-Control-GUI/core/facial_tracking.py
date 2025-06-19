@@ -1,4 +1,4 @@
-#facial tracking system for eye servo control with mediapipe
+#facial tracking system for eye servo control with mediapipe using position-based component lookup
 
 import cv2
 import mediapipe as mp
@@ -41,15 +41,27 @@ class FacialTracker:
         self.camera_width = 320
         self.camera_height = 240
     
+    #get eye component names from head group positions
+    def _get_eye_component_names(self):
+        head_components = self.state.get_component_group("head")
+        if len(head_components) >= 2:
+            return head_components[0], head_components[1]  #horizontal, vertical
+        else:
+            #fallback to default names if head group insufficient
+            return "eye_horizontal", "eye_vertical"
+    
     #start facial tracking with given camera dimensions
     def start_tracking(self, camera_width, camera_height):
         self.is_tracking = True
         self.camera_width = camera_width
         self.camera_height = camera_height
         
+        #get current eye component names
+        h_component, v_component = self._get_eye_component_names()
+        
         #initialise previous positions to current servo positions
-        h_config = self.state.get_component_config("eye_horizontal")
-        v_config = self.state.get_component_config("eye_vertical")
+        h_config = self.state.get_component_config(h_component)
+        v_config = self.state.get_component_config(v_component)
         self.previous_horizontal = h_config["current_position"]
         self.previous_vertical = v_config["current_position"]
         
@@ -60,7 +72,7 @@ class FacialTracker:
         self.no_face_timer_start = None
         self.is_returning_to_default = False
         
-        self.log_callback("facial tracking started")
+        self.log_callback(f"facial tracking started using {h_component} and {v_component}")
     
     #stop facial tracking and return eyes to default positions
     def stop_tracking(self):
@@ -72,12 +84,13 @@ class FacialTracker:
         self.no_face_timer_start = None
         self.is_returning_to_default = False
         
-        #return eyes to default positions
-        h_config = self.state.get_component_config("eye_horizontal")
-        v_config = self.state.get_component_config("eye_vertical")
+        #get current eye component names and return to defaults
+        h_component, v_component = self._get_eye_component_names()
+        h_config = self.state.get_component_config(h_component)
+        v_config = self.state.get_component_config(v_component)
         
-        self._move_servo_smooth("eye_horizontal", h_config["default_position"])
-        self._move_servo_smooth("eye_vertical", v_config["default_position"])
+        self._move_servo_smooth(h_component, h_config["default_position"])
+        self._move_servo_smooth(v_component, v_config["default_position"])
         
         self.log_callback("facial tracking stopped - eyes returned to default")
     
@@ -168,12 +181,13 @@ class FacialTracker:
     
     #continue smooth return to default positions
     def _continue_return_to_default(self):
-        h_config = self.state.get_component_config("eye_horizontal")
-        v_config = self.state.get_component_config("eye_vertical")
+        h_component, v_component = self._get_eye_component_names()
+        h_config = self.state.get_component_config(h_component)
+        v_config = self.state.get_component_config(v_component)
         
         #move towards default positions using existing smoothing
-        self._move_servo_smooth("eye_horizontal", h_config["default_position"])
-        self._move_servo_smooth("eye_vertical", v_config["default_position"])
+        self._move_servo_smooth(h_component, h_config["default_position"])
+        self._move_servo_smooth(v_component, v_config["default_position"])
         
         #check if reached default positions
         current_h = h_config["current_position"]
@@ -219,17 +233,20 @@ class FacialTracker:
         target_face = self.detected_faces[self.current_target_index]
         center_x, center_y = target_face['center']
         
+        #get current eye component names
+        h_component, v_component = self._get_eye_component_names()
+        
         #calculate pulse widths for horizontal and vertical movement
-        horizontal_pulse = self._calculate_horizontal_pulse(center_x)
-        vertical_pulse = self._calculate_vertical_pulse(center_y)
+        horizontal_pulse = self._calculate_horizontal_pulse(center_x, h_component)
+        vertical_pulse = self._calculate_vertical_pulse(center_y, v_component)
         
         #apply smoothing and move servos
-        self._move_servo_smooth("eye_horizontal", horizontal_pulse)
-        self._move_servo_smooth("eye_vertical", vertical_pulse)
+        self._move_servo_smooth(h_component, horizontal_pulse)
+        self._move_servo_smooth(v_component, vertical_pulse)
     
     #calculate horizontal servo pulse width from face x coordinate
-    def _calculate_horizontal_pulse(self, face_x):
-        h_config = self.state.get_component_config("eye_horizontal")
+    def _calculate_horizontal_pulse(self, face_x, component_name):
+        h_config = self.state.get_component_config(component_name)
         
         #calculate offset from camera center
         camera_center_x = self.camera_width / 2
@@ -248,8 +265,8 @@ class FacialTracker:
         return int(horizontal_pulse)
     
     #calculate vertical servo pulse width from face y coordinate
-    def _calculate_vertical_pulse(self, face_y):
-        v_config = self.state.get_component_config("eye_vertical")
+    def _calculate_vertical_pulse(self, face_y, component_name):
+        v_config = self.state.get_component_config(component_name)
         
         #calculate offset from camera center
         camera_center_y = self.camera_height / 2
@@ -272,8 +289,9 @@ class FacialTracker:
         config = self.state.get_component_config(component_name)
         current_pulse = config["current_position"]
         
-        #get previous position for smoothing
-        if component_name == "eye_horizontal":
+        #get previous position for smoothing based on component type
+        h_component, v_component = self._get_eye_component_names()
+        if component_name == h_component:
             previous_pulse = self.previous_horizontal if self.previous_horizontal is not None else current_pulse
         else:
             previous_pulse = self.previous_vertical if self.previous_vertical is not None else current_pulse
@@ -300,8 +318,8 @@ class FacialTracker:
                     #update state manager
                     self.state.update_servo_position(component_name, new_pulse)
         
-        #update previous position for next frame
-        if component_name == "eye_horizontal":
+        #update previous position for next frame based on component type
+        if component_name == h_component:
             self.previous_horizontal = new_pulse
         else:
             self.previous_vertical = new_pulse
@@ -344,4 +362,4 @@ class FacialTracker:
             'current_target': self.current_target_index + 1 if self.detected_faces else 0,
             'switch_interval': self.switch_interval,
             'returning_to_default': self.is_returning_to_default
-        }
+        }   

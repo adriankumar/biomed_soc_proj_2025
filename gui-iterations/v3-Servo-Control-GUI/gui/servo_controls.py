@@ -1,21 +1,21 @@
-#servo control widgets and management with reliable gui updates
+#servo control widgets and management with component groups as order authority
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 import time
-from hardware.servo_config import COMPONENT_GROUPS
 from core.validation import validate_pulse_width, validate_servo_index, SLIDER_THROTTLE_MS
 from core.event_system import subscribe_component, subscribe, Events
 
 class ServoControlWidget:
-    #individual servo control widget
-    def __init__(self, parent, component_name, state, send_command_callback):
+    #individual servo control widget with simplified rename functionality
+    def __init__(self, parent, component_name, state, send_command_callback, rename_callback):
         self.component_name = component_name
         self.state = state
         self.send_command = send_command_callback
+        self.rename_callback = rename_callback
         self.last_command_time = 0
         
-        #get component configuration
+        #get component configuration from lookup table
         self.config = state.get_component_config(component_name)
         
         #create widget frame
@@ -27,6 +27,7 @@ class ServoControlWidget:
         self.pulse_max_var = tk.IntVar(value=self.config["pulse_max"])
         self.default_position_var = tk.IntVar(value=self.config["default_position"])
         self.index_var = tk.IntVar(value=self.config["index"])
+        self.component_name_var = tk.StringVar(value=component_name)
         
         self._create_widget()
         
@@ -40,10 +41,21 @@ class ServoControlWidget:
         #subscribe to index swap events for all components
         subscribe([Events.COMPONENT_INDEX_SWAPPED], self._on_index_swap)
     
-    #create individual servo control widget
+    #create individual servo control widget with rename capability
     def _create_widget(self):
         main_frame = ttk.Frame(self.frame)
         main_frame.pack(padx=5, pady=5)
+        
+        #component name entry for renaming
+        name_frame = ttk.Frame(main_frame)
+        name_frame.pack(fill="x", pady=(0, 5))
+        
+        ttk.Label(name_frame, text="name:", font=("Arial", 8)).pack(side="left")
+        
+        self.name_entry = ttk.Entry(name_frame, textvariable=self.component_name_var, width=15, font=("Arial", 8))
+        self.name_entry.pack(side="left", padx=(2, 0))
+        self.name_entry.bind("<Return>", self._on_rename_entry)
+        self.name_entry.bind("<FocusOut>", self._on_rename_entry)
         
         #slider section
         slider_frame = ttk.Frame(main_frame)
@@ -104,6 +116,27 @@ class ServoControlWidget:
         self.index_entry.bind("<Return>", self._on_index_entry)
         self.index_entry.bind("<FocusOut>", self._on_index_entry)
     
+    #handle component rename operation using simplified state manager approach
+    def _on_rename_entry(self, event=None):
+        new_name = self.component_name_var.get().strip()
+        old_name = self.component_name
+        
+        if not new_name or new_name == old_name:
+            self.component_name_var.set(old_name)  #reset to original
+            return
+        
+        #use simplified rename through state manager
+        success, message = self.state.rename_component(old_name, new_name)
+        
+        if success:
+            #notify parent to recreate widgets with component groups order
+            if self.rename_callback:
+                self.rename_callback()
+        else:
+            #show error and reset name
+            messagebox.showerror("rename error", message)
+            self.component_name_var.set(old_name)
+    
     #handle slider changes with throttling
     def _on_slider_changed(self, value):
         current_time = time.time()
@@ -125,7 +158,7 @@ class ServoControlWidget:
         
         pulse_width = result.value
         
-        #check component range
+        #check component range using lookup
         config = self.config
         if not (config["pulse_min"] <= pulse_width <= config["pulse_max"]):
             messagebox.showwarning("out of range", 
@@ -192,7 +225,7 @@ class ServoControlWidget:
         if current_index == new_index:
             return
         
-        #find component with target index for swapping
+        #find component with target index for swapping using lookup
         target_component = None
         for comp_name, comp_config in self.state.servo_configurations.items():
             if comp_config["index"] == new_index:
@@ -227,9 +260,9 @@ class ServoControlWidget:
         if not (self.config["pulse_min"] <= current <= self.config["pulse_max"]):
             self.pulse_width_var.set(self.config["current_position"])
     
-    #force refresh of all display values
+    #refresh all display values using lookup
     def _refresh_all_displays(self):
-        #force update all gui variables from current state
+        #update all gui variables from current state lookup
         self.pulse_width_var.set(self.config["current_position"])
         self.pulse_min_var.set(self.config["pulse_min"])
         self.pulse_max_var.set(self.config["pulse_max"])
@@ -273,7 +306,6 @@ class ServoControlWidget:
             component_name, setting, value = args
             if setting == "index":
                 self.index_var.set(value)
-                #force immediate display refresh
                 self.frame.update_idletasks()
             elif setting == "default_position":
                 self.default_position_var.set(value)
@@ -282,16 +314,13 @@ class ServoControlWidget:
     def _on_index_swap(self, event_type, *args, **kwargs):
         component1, component2 = args
         if component1 == self.component_name or component2 == self.component_name:
-            #force immediate refresh of index display
             self.index_var.set(self.config["index"])
             self.frame.update_idletasks()
-            
-            #schedule a delayed refresh to ensure display is correct
             self.frame.after(50, self._refresh_all_displays)
 
 
 class ServoControlsManager:
-    #manages grouped servo control widgets
+    #manages grouped servo control widgets using component groups order authority
     def __init__(self, parent, state, send_command_callback):
         self.frame = ttk.LabelFrame(parent, text="servo controls")
         self.state = state
@@ -299,14 +328,13 @@ class ServoControlsManager:
         
         self.servo_widgets = {}
         self.selected_component_group = tk.StringVar()
-        self.component_groups = COMPONENT_GROUPS
         
         self._create_controls()
         
         #subscribe to events that affect all widgets
         subscribe([Events.ALL_SERVOS_RESET, Events.COMPONENT_INDEX_SWAPPED], self._on_global_event)
     
-    #create main control interface
+    #create main control interface using component groups
     def _create_controls(self):
         header_frame = ttk.Frame(self.frame)
         header_frame.pack(fill="x", padx=10, pady=5)
@@ -321,7 +349,8 @@ class ServoControlsManager:
         radio_frame = ttk.Frame(selection_frame)
         radio_frame.grid(row=1, column=0, sticky="w", pady=(5, 0))
         
-        group_names = list(self.component_groups.keys())
+        component_groups = self.state.get_all_component_groups()
+        group_names = list(component_groups.keys())
         self.selected_component_group.set(group_names[0])
         
         for i, group in enumerate(group_names):
@@ -352,57 +381,60 @@ class ServoControlsManager:
         
         self._create_group_widgets()
     
-    #handle component group selection change
+    #handle component group selection change with complete widget rebuild
     def _on_group_changed(self):
-        #clear existing widgets
+        #clear all existing widgets completely
         for widget in self.controls_container.winfo_children():
             widget.destroy()
         
-        #clear widget references
-        selected_group = self.selected_component_group.get()
-        if selected_group in self.component_groups:
-            for component_name in self.component_groups[selected_group]:
-                if component_name in self.servo_widgets:
-                    del self.servo_widgets[component_name]
+        #clear all widget references to ensure clean rebuild
+        self.servo_widgets.clear()
         
         self._create_group_widgets()
     
-    #create widgets for selected component group
+    #create widgets for selected component group using group order
     def _create_group_widgets(self):
         selected_group = self.selected_component_group.get()
-        if selected_group in self.component_groups:
-            component_names = self.component_groups[selected_group]
-            
-            for component_name in component_names:
-                widget = ServoControlWidget(
-                    self.controls_container, 
-                    component_name, 
-                    self.state, 
-                    self.send_command
-                )
-                widget.frame.pack(side="left", fill="y", padx=5, pady=5)
-                self.servo_widgets[component_name] = widget
+        component_names = self.state.get_component_group(selected_group)
+        
+        for component_name in component_names:
+            widget = ServoControlWidget(
+                self.controls_container, 
+                component_name, 
+                self.state, 
+                self.send_command,
+                self._on_component_renamed
+            )
+            widget.frame.pack(side="left", fill="y", padx=5, pady=5)
+            self.servo_widgets[component_name] = widget
+    
+    #handle component rename by recreating widgets with component groups order
+    def _on_component_renamed(self):
+        #recreate widgets using component groups authority for order
+        self._on_group_changed()
     
     #handle global events that affect multiple widgets
     def _on_global_event(self, event_type, *args, **kwargs):
         if event_type == Events.ALL_SERVOS_RESET:
-            #update all visible widgets
+            #update all visible widgets using component groups order
             self._refresh_visible_widgets()
             
         elif event_type == Events.COMPONENT_INDEX_SWAPPED:
             #force refresh all visible widgets for index swaps
             self._refresh_visible_widgets()
     
-    #refresh all currently visible widgets
+    #refresh all currently visible widgets using component groups order
     def _refresh_visible_widgets(self):
         selected_group = self.selected_component_group.get()
-        if selected_group in self.component_groups:
-            for component_name in self.component_groups[selected_group]:
-                if component_name in self.servo_widgets:
-                    widget = self.servo_widgets[component_name]
-                    widget._refresh_all_displays()
+        component_names = self.state.get_component_group(selected_group)
+        
+        #refresh widgets that exist in current view using groups order
+        for component_name in component_names:
+            if component_name in self.servo_widgets:
+                widget = self.servo_widgets[component_name]
+                widget._refresh_all_displays()
     
-    #reset all servos to defaults
+    #reset all servos to defaults using component groups order
     def _reset_all_servos(self):
         reset_commands = self.state.reset_all_servos_to_defaults()
         
@@ -410,9 +442,9 @@ class ServoControlsManager:
             if self.send_command:
                 self.send_command(f"SP:{servo_index}:{pulse_width}")
         
-        #refresh visible widgets
+        #refresh visible widgets using component groups order
         self._refresh_visible_widgets()
     
-    #save servo configuration
+    #save servo configuration using component groups order
     def _save_servo_config(self):
         self.state.save_config_to_file()

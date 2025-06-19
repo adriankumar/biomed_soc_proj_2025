@@ -15,3 +15,5 @@
 
 
 
+#TO ADD
+- tqdm for loading bar for gui i.e when searching for available cameras connected to device
