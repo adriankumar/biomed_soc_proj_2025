@@ -5,6 +5,8 @@
 
  `v2-servo-control-gui`: Uses velocity graph and no smoothing factor, contains corresponding esp_listening_code needed by esp to work with this GUI
 
+ `v3-servo-control-gui`: Has no velocity or smoothing factor (for now), GUI now uses raw pulse width values, allows cuonfiguration of pulse ranges, default values and dynamic pin assignment; allows basic sequence recording with updated visual display; has a command terminal for alterantive interactive interface; includes a video/camera display of robot eyes (no tracking implemented yet); ensure to upload this esp code before using the GUI. To run, execute `main.py`
+
  **For Biomed/Software Team:** 
  - Refer to to `files > 2025 > software_files > python_env.docx` on teams channel for current python version and libraries needed to run this project; Any new libraries used need to be recorded in `python_env.docx`
  - Use `github desktop` or `git` to clone this main branch for up to date servo gui control
@@ -12,9 +14,4 @@
  - Ensure `esp_code` is uploaded to esp before running corresponding GUI
 
 
- **Future changes needed:**
- - Need to modify individual controls display: the scroll bar for individual controlling of n number of servos doesn't work properly, so you can only individually control the servos you see in the display; the current work around is to use the velocity editor and `add keyframes` to the current sequence or use the master control; potentially use a fixed 5 x 6 grid space since max servos allowed is 30 (can be changed in code but please note this down somewhere so we know)
-- Add dynamic servo updating where we can update the number of servos to control/initialise while the gui is opened; will need to clear refresh any current information in the GUI for house keeping purposes
 
-**TO DO (adri):**
-- Upadte `flow_diagrams_for_bap`
