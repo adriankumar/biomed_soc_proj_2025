@@ -10,8 +10,8 @@ SERIAL_TIMEOUT = 1.0
 
 #default component configurations
 DEFAULT_COMPONENT_CONFIGS = {
-    "head_1": {"index": 0, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
-    "head_2": {"index": 1, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
+    "eye_horizontal": {"index": 0, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
+    "eye_vertical": {"index": 1, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
     "head_3": {"index": 2, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
     "head_4": {"index": 3, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
     "head_5": {"index": 4, "pulse_min": DEFAULT_PULSE_MIN, "pulse_max": DEFAULT_PULSE_MAX, "default_position": DEFAULT_PULSE_CENTER, "current_position": DEFAULT_PULSE_CENTER},
@@ -39,7 +39,7 @@ DEFAULT_COMPONENT_CONFIGS = {
 
 #component groups for organised display
 COMPONENT_GROUPS = {
-    "head": ["head_1", "head_2", "head_3", "head_4", "head_5"],
+    "head": ["eye_horizontal", "eye_vertical", "head_3", "head_4", "head_5"],
     "left_hand": ["left_hand_1", "left_hand_2", "left_hand_3", "left_hand_4", "left_hand_5"],
     "right_hand": ["right_hand_1", "right_hand_2", "right_hand_3", "right_hand_4", "right_hand_5"],
     "left_elbow": ["left_elbow_1", "left_elbow_2"],

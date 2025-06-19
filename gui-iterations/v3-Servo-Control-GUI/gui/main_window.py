@@ -12,9 +12,10 @@ from core.event_system import subscribe, Events, cleanup
 
 class ContentSwitcher:
     #manages additional tools and content switching including eye display
-    def __init__(self, parent, state, log_callback):
+    def __init__(self, parent, state, serial_connection, log_callback):
         self.frame = ttk.LabelFrame(parent, text="additional tools")
         self.state = state
+        self.serial_connection = serial_connection
         self.log_callback = log_callback
         
         #content switching state
@@ -24,7 +25,6 @@ class ContentSwitcher:
         #sequence recording components
         self.sequence_recorder_widget = None
         self.sequence_manager = None
-        self.serial_connection = None
         
         #eye display components
         self.eye_display_widget = None
@@ -32,9 +32,8 @@ class ContentSwitcher:
         self._create_ui()
     
     #set dependencies for sequence recording
-    def set_sequence_dependencies(self, sequence_manager, serial_connection):
+    def set_sequence_dependencies(self, sequence_manager):
         self.sequence_manager = sequence_manager
-        self.serial_connection = serial_connection
     
     #create content switcher interface
     def _create_ui(self):
@@ -111,13 +110,15 @@ class ContentSwitcher:
         
         self.sequence_recorder_widget.show()
     
-    #create eye display content
+    #create eye display content with facial tracking
     def _create_eye_display_content(self):
         if self.eye_display_widget is None:
             from gui.eye_display import EyeDisplayWidget
             
             self.eye_display_widget = EyeDisplayWidget(
                 parent=self.content_container,
+                state_manager=self.state,
+                serial_connection=self.serial_connection,
                 log_callback=self.log_callback
             )
         
@@ -236,8 +237,10 @@ class ServoControlGUI:
         )
         self.servo_controls.frame.grid(row=0, column=0, sticky="nw", padx=(0, 10))
         
-        #content switcher (right)
-        self.content_switcher = ContentSwitcher(content_frame, self.state, self._log_message)
+        #content switcher (right) - pass serial connection for facial tracking
+        self.content_switcher = ContentSwitcher(
+            content_frame, self.state, self.serial_connection, self._log_message
+        )
         self.content_switcher.frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         
         #terminal section (bottom)
@@ -269,10 +272,7 @@ class ServoControlGUI:
     #setup sequence recording integration
     def _setup_sequence_integration(self):
         if self.content_switcher and self.serial_connection:
-            self.content_switcher.set_sequence_dependencies(
-                self.sequence_manager,
-                self.serial_connection
-            )
+            self.content_switcher.set_sequence_dependencies(self.sequence_manager)
             self._log_message("sequence recording system initialised")
     
     #log startup information
@@ -284,15 +284,15 @@ class ServoControlGUI:
         
         self._log_message("servo control system ready")
         self._log_message("command terminal ready - type commands below or click help")
-        self._log_message("eye display system available for camera testing")
+        self._log_message("eye display system available with facial tracking")
     
     #handle connection state changes
     def _on_connection_changed(self, event_type, *args, **kwargs):
         connected = args[0]
         if connected:
-            self._log_message("sequence recording now available")
+            self._log_message("sequence recording and facial tracking now available")
         else:
-            self._log_message("sequence recording disabled - no serial connection")
+            self._log_message("sequence recording and facial tracking disabled - no serial connection")
     
     #log message to console
     def _log_message(self, message):
@@ -315,10 +315,10 @@ class ServoControlGUI:
                 sequence_widget.playback_manager.stop_playback()
                 self._log_message("stopped sequence playback")
         
-        #cleanup eye display if active
+        #cleanup eye display and facial tracking if active
         if hasattr(self.content_switcher, 'eye_display_widget') and self.content_switcher.eye_display_widget:
             self.content_switcher.eye_display_widget.cleanup()
-            self._log_message("stopped eye display cameras")
+            self._log_message("stopped eye display cameras and facial tracking")
         
         #cleanup components
         if self.serial_connection:
