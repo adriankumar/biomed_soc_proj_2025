@@ -1,0 +1,105 @@
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
+/* pca9685 configuration */
+Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
+
+/* system configuration */
+#define MAX_SERVOS 25
+#define BAUD_RATE 115200
+#define SDA_PIN 44 //RX pin
+#define SCL_PIN 43 //TX pin
+#define PWM_FREQUENCY 50 //fixed frequency for all servos
+
+/* global state */
+int active_num_servos = 25;
+String input_buffer = "";
+bool command_ready = false;
+
+//initialise system and pca board
+void setup() {
+    Serial.begin(BAUD_RATE);
+    delay(1000);
+    Serial.println("servo control system starting...");
+    
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Serial.print("i2c initialised on sda=");
+    Serial.print(SDA_PIN);
+    Serial.print(", scl=");
+    Serial.println(SCL_PIN);
+    
+    if (!pca.begin()) {
+        Serial.println("pca9685 initialisation failed!");
+        while (1);
+    }
+    
+    pca.setPWMFreq(PWM_FREQUENCY);
+    Serial.print("pca9685 ready with frequency: ");
+    Serial.print(PWM_FREQUENCY);
+    Serial.println("hz");
+    
+    Serial.println("servos ready - maintaining last positions");
+    Serial.println("ready for commands");
+}
+
+//main program loop
+void loop() {
+    read_serial_input();
+    
+    if (command_ready) {
+        process_command(input_buffer);
+        input_buffer = "";
+        command_ready = false;
+    }
+}
+
+//read serial input and detect complete commands
+void read_serial_input() {
+    while (Serial.available()) {
+        char incoming_char = Serial.read();
+        
+        if (incoming_char == '\n' || incoming_char == '\r') {
+            if (input_buffer.length() > 0) {
+                command_ready = true;
+            }
+        } else {
+            input_buffer += incoming_char;
+        }
+    }
+}
+
+//process received commands
+void process_command(String command) {
+    command.trim();
+    
+    if (command.startsWith("SP:")) {
+        handle_servo_pulse_command(command);
+    } else if (command.startsWith("NUM_SERVOS:")) {
+        handle_servo_count_command(command);
+    }
+}
+
+//handle servo pulse width commands
+void handle_servo_pulse_command(String command) {
+    int first_colon = command.indexOf(':', 3);
+    
+    if (first_colon != -1) {
+        int servo_id = command.substring(3, first_colon).toInt();
+        int pulse_width = command.substring(first_colon + 1).toInt();
+        
+        if (servo_id >= 0 && servo_id < MAX_SERVOS && pulse_width >= 0 && pulse_width <= 4095) {
+            pca.setPWM(servo_id, 0, pulse_width);
+        }
+    }
+}
+
+//handle servo count configuration
+void handle_servo_count_command(String command) {
+    int num = command.substring(11).toInt();
+    
+    if (num >= 1 && num <= MAX_SERVOS) {
+        active_num_servos = num;
+        Serial.print("active servos set to ");
+        Serial.println(active_num_servos);
+    }
+}

@@ -1,0 +1,16 @@
+
+#to be formatted properly soon xx
+python 3.9.21 
+
+pyserial 3.5 
+
+pillow 11.1.0 
+
+Opencv-python 4.11.0.86 
+
+
+#dont know if these are even needed yet but defineitly for the pose estimation and llm stuff
+matplotlib 3.7.1 
+
+numpy 1.24.3 
+

@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+import time
 
 class MasterControl:
     def __init__(self, parent, send_command_callback=None, num_servos=5):
@@ -57,9 +58,15 @@ class MasterControl:
     #event handlers
     #-----------------------------------------------------------------------
     def _on_slider_changed(self, event=None): #when slider changes, get the current angle it is on and send the command
-        angle = self.master_angle.get()
-        if self.send_command:
-            self.send_command(f"MA:{angle}")
+        # angle = self.master_angle.get()
+        current_time = time.time()
+        if not hasattr(self, '_last_command_time') or (current_time - self._last_command_time) > 0.05:
+            angle = self.master_angle.get()
+
+            if self.send_command:
+                result = self.send_command(f"MA:{angle}")
+                if result:
+                    self._last_command_time = current_time
 
     def _on_angle_entry(self, event=None): #when user enters angle from text entry field
         try:

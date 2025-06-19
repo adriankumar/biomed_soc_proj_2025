@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from master_control import MasterControl
+import time
 
 class SingleControls:
     def __init__(self, parent, num_servos, send_command_callback=None):
@@ -119,10 +120,16 @@ class SingleControls:
 # event handlers
 # -----------------------------------------------------------------------
     def _on_slider_changed(self, servo_id): #send individual command when individual servo angle is moved
-        angle = self.servo_angles[servo_id].get()
+        # angle = self.servo_angles[servo_id].get()
         
-        if self.send_command:
-            self.send_command(f"SA:{servo_id}:{angle}")
+        current_time = time.time()
+        if not hasattr(self, '_last_command_time') or (current_time - self._last_command_time) > 0.05:  #50ms throttle
+            angle = self.servo_angles[servo_id].get()
+
+            if self.send_command:
+                result = self.send_command(f"SA:{servo_id}:{angle}")
+                if result:
+                    self.last_command_time = current_time
     
     def _on_angle_entry(self, servo_id, event=None): #exact samne as master control just diff argument and serial command.. could also potentially make them both into a reusable function to reduce code
             control = self.servo_controls[servo_id]

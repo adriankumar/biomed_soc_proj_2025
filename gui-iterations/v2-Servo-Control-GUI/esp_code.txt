@@ -14,8 +14,8 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 #define MAX_SERVOS 32   // Maximum number of servos
 
 // I2C pin configuration
-#define SDA_PIN 6 //used to be 21
-#define SCL_PIN 5 //used to be 47
+#define SDA_PIN 44 //used to be 21, 44 is RX on esp
+#define SCL_PIN 43 //used to be 47, 43 is TX on esp
 
 // Update interval for servo position calculations
 const int UPDATE_INTERVAL_MS = 10;  // Update every 10ms (100Hz)
