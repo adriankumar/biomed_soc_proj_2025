@@ -1,17 +1,80 @@
-#simplified serial communication with esp32
+#simplified serial communication with esp32 and cpu monitoring
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 import serial
 import serial.tools.list_ports
 import time
+import threading
+import psutil
+import os
 from hardware.servo_config import BAUD_RATE, SERIAL_TIMEOUT, MAX_SERVOS
 from core.event_system import publish, Events
 
+class CPUMonitor:
+    #monitors cpu usage for gui application process only
+    def __init__(self, gui_callback):
+        self.gui_callback = gui_callback
+        self.monitoring_active = False
+        self.monitor_thread = None
+        self.current_process = None
+        self.cpu_percentage = 0.0
+        
+        #initialise process monitoring
+        try:
+            self.current_process = psutil.Process(os.getpid())
+            self.monitoring_active = True
+        except Exception:
+            self.monitoring_active = False
+    
+    #start cpu monitoring in background thread
+    def start_monitoring(self):
+        if self.monitoring_active and not (self.monitor_thread and self.monitor_thread.is_alive()):
+            self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+            self.monitor_thread.start()
+    
+    #stop cpu monitoring
+    def stop_monitoring(self):
+        self.monitoring_active = False
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=1.0)
+    
+    #background monitoring loop for cpu usage
+    def _monitor_loop(self):
+        while self.monitoring_active:
+            try:
+                if self.current_process and self.current_process.is_running():
+                    #get cpu percentage for gui process only
+                    cpu_percent = self.current_process.cpu_percent(interval=1.0)
+                    self.cpu_percentage = round(cpu_percent, 1)
+                    
+                    #thread-safe gui update
+                    if self.gui_callback:
+                        self.gui_callback(self.cpu_percentage)
+                else:
+                    self.cpu_percentage = 0.0
+                    
+                #wait before next measurement
+                time.sleep(2.0)
+                
+            except Exception:
+                #continue monitoring even if individual measurement fails
+                self.cpu_percentage = 0.0
+                time.sleep(3.0)
+    
+    #get current cpu usage
+    def get_cpu_usage(self):
+        return self.cpu_percentage
+    
+    #check if monitoring is available
+    def is_monitoring_available(self):
+        return self.monitoring_active
+
+
 class SerialConnection:
-    #manages direct serial communication with esp32
+    #manages direct serial communication with esp32 and cpu monitoring
     def __init__(self, parent, log_callback):
-        self.frame = ttk.LabelFrame(parent, text="serial connection")
+        self.frame = ttk.LabelFrame(parent, text="serial connection & system monitor")
         self.log_callback = log_callback
         
         #connection state
@@ -22,9 +85,31 @@ class SerialConnection:
         self.port_var = tk.StringVar()
         self.baudrate_var = tk.IntVar(value=BAUD_RATE)
         
+        #cpu monitoring
+        self.cpu_monitor = CPUMonitor(self._on_cpu_update)
+        self.cpu_usage_text = "CPU: --"
+        
         self._create_ui()
+        
+        #start cpu monitoring
+        self.cpu_monitor.start_monitoring()
     
-    #create connection interface
+    #thread-safe callback for cpu usage updates
+    def _on_cpu_update(self, cpu_percent):
+        #schedule gui update on main thread
+        self.frame.after(0, self._update_cpu_display, cpu_percent)
+    
+    #update cpu display on main thread
+    def _update_cpu_display(self, cpu_percent):
+        if cpu_percent > 0:
+            self.cpu_usage_text = f"CPU: {cpu_percent}%"
+        else:
+            self.cpu_usage_text = "CPU: --"
+        
+        #update status display with current connection and cpu info
+        self._update_status_display()
+    
+    #create connection interface with cpu monitoring
     def _create_ui(self):
         main_frame = ttk.Frame(self.frame)
         main_frame.pack(fill="x", padx=10, pady=10)
@@ -48,7 +133,7 @@ class SerialConnection:
         self.connect_button = ttk.Button(main_frame, text="connect", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=5, padx=10, pady=2)
         
-        #status display
+        #status display with cpu monitoring
         status_frame = ttk.Frame(self.frame)
         status_frame.pack(fill="x", padx=10, pady=5)
         
@@ -57,7 +142,17 @@ class SerialConnection:
         self.status_label = ttk.Label(status_frame, text="disconnected", foreground="red")
         self.status_label.pack(side="left", padx=5)
         
+        #cpu usage display
+        self.cpu_label = ttk.Label(status_frame, text=self.cpu_usage_text, foreground="blue")
+        self.cpu_label.pack(side="right", padx=5)
+        
         self.refresh_ports()
+    
+    #update combined status display
+    def _update_status_display(self):
+        #update cpu label separately
+        if hasattr(self, 'cpu_label'):
+            self.cpu_label.config(text=self.cpu_usage_text)
     
     #refresh available serial ports
     def refresh_ports(self):
@@ -166,8 +261,12 @@ class SerialConnection:
     def is_connected(self):
         return self.serial_connection is not None and self.serial_connection.is_open
     
-    #cleanup resources
+    #cleanup resources including cpu monitoring
     def cleanup(self):
+        #stop cpu monitoring
+        self.cpu_monitor.stop_monitoring()
+        
+        #close serial connection
         if self.serial_connection:
             self.serial_connection.close()
             self.serial_connection = None
