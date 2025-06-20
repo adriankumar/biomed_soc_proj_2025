@@ -223,7 +223,7 @@ class FacialTracker:
     
     #set random interval for next face switch
     def _set_random_switch_interval(self):
-        self.switch_interval = random.uniform(2.0, 8.0)  #switch every 2-8 seconds
+        self.switch_interval = random.uniform(8.0, 16.0)  #switch every 8-16 seconds
     
     #move eyes to currently targeted face
     def _move_eyes_to_target(self):
