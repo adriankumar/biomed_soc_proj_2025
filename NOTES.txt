@@ -1,5 +1,7 @@
 Things to note:
 
+- RX pin -> SDA; TX pin -> SCL
+
 - Use the 'v3-servo-control-GUI' and run 'main.py'; ensure all the libraries in the requirements.txt is installed to use
 
 - Ensure to upload the esp-code.txt from 'v3-servo-control-GUI' folder to the esp board before using the GUI
