@@ -1,0 +1,15 @@
+Things to note:
+
+- Use the 'v3-servo-control-GUI' and run 'main.py'; ensure all the libraries in the requirements.txt is installed to use
+
+- Ensure to upload the esp-code.txt from 'v3-servo-control-GUI' folder to the esp board before using the GUI
+
+- when initially opening the GUI, please select 'eye display' first, even if you're not using it, just let the gui search for the connected cameras, then select the correct camera device; you will notice CPU usage go up or the GUI freezing momentarily, this is normal.
+
+- Do not press 'start tacking' for the camera until you have configured the min max ranges and default value of the eye components AND have connected to the serial port (this is just for safety cos i cant anticipate the bugs that might occur, but it will work regardless)
+
+- Do not press 'refresh cameras' unless you absolutely need to (i.e connecting a new camera device while the GUI is opened), because it may cause the GUI to freeze as it sweeps for all connected camera devices. If you press it and it looks like the GUI is frozen, click the camera source again and reselect the camera device, or select 'no-camera' then your camera device.
+
+- eye_horizontal and eye_vertical are the slider controls that have been mapped to the facial tracking, so while you can change their names to be something else, changing the name of another component like "head_3" to "eye_horizontal" will not map the facial tracking to that control, so you have to stick with the first slider and second slider, but that's why you have the dynamic pin assignment anyways!
+
+- You may sequence record while the camera is active/facial tracking
