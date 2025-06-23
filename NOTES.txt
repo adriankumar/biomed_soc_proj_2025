@@ -14,4 +14,4 @@ Things to note:
 
 - eye_horizontal and eye_vertical are the slider controls that have been mapped to the facial tracking, so while you can change their names to be something else, changing the name of another component like "head_3" to "eye_horizontal" will not map the facial tracking to that control, so you have to stick with the first slider and second slider, but that's why you have the dynamic pin assignment anyways!
 
-- You can sequence record while the camera is active/facial tracking, but u gotta manually input the delay
+- You can record sequences while the camera is active/facial tracking, but u gotta manually input the delay
