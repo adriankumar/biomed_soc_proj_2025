@@ -1,0 +1,89 @@
+{
+  "team_1_test": {
+    "team": 1,
+    "folder_name": "test",
+    "folder_path": "/Users/gulliverwright/Library/CloudStorage/GoogleDrive-vicepresident@biomed.activateuts.com.au/My Drive/Bytes and Bolts Print Submissions/team 1/test",
+    "stl_files": [
+      "Complaint Scaffold 1 - William Gulliver W.stl",
+      "Complaint Scaffold 1 - William Gulliver W 3.stl",
+      "Complaint Scaffold 1 - William Gulliver W 2.stl"
+    ],
+    "creation_time": 1750859348.724,
+    "creation_date": "2025-06-25 23:49:08",
+    "status": "completed",
+    "added_to_queue": "2025-06-25 23:49:26",
+    "stl_file_status": {
+      "Complaint Scaffold 1 - William Gulliver W.stl": {
+        "printed": true,
+        "print_date": "2025-06-25 23:57:31"
+      },
+      "Complaint Scaffold 1 - William Gulliver W 3.stl": {
+        "printed": true,
+        "print_date": "2025-06-25 23:57:31"
+      },
+      "Complaint Scaffold 1 - William Gulliver W 2.stl": {
+        "printed": true,
+        "print_date": "2025-06-25 23:57:31"
+      }
+    },
+    "status_updated": "2025-06-25 23:57:38"
+  },
+  "team_1_test copy 2": {
+    "team": 1,
+    "folder_name": "test copy 2",
+    "folder_path": "/Users/gulliverwright/Library/CloudStorage/GoogleDrive-vicepresident@biomed.activateuts.com.au/My Drive/Bytes and Bolts Print Submissions/team 1/test copy 2",
+    "stl_files": [
+      "Complaint Scaffold 1 - William Gulliver W.stl",
+      "Complaint Scaffold 1 - William Gulliver W 3.stl",
+      "Complaint Scaffold 1 - William Gulliver W 2.stl"
+    ],
+    "stl_file_status": {
+      "Complaint Scaffold 1 - William Gulliver W.stl": {
+        "printed": false,
+        "print_date": null
+      },
+      "Complaint Scaffold 1 - William Gulliver W 3.stl": {
+        "printed": false,
+        "print_date": null
+      },
+      "Complaint Scaffold 1 - William Gulliver W 2.stl": {
+        "printed": false,
+        "print_date": null
+      }
+    },
+    "creation_time": 1750859364.684,
+    "creation_date": "2025-06-25 23:49:24",
+    "status": "deleted",
+    "added_to_queue": "2025-06-26 00:04:56",
+    "deleted_detected": "2025-06-26 00:05:07"
+  },
+  "team_1_test copy": {
+    "team": 1,
+    "folder_name": "test copy",
+    "folder_path": "/Users/gulliverwright/Library/CloudStorage/GoogleDrive-vicepresident@biomed.activateuts.com.au/My Drive/Bytes and Bolts Print Submissions/team 1/test copy",
+    "stl_files": [
+      "Complaint Scaffold 1 - William Gulliver W.stl",
+      "Complaint Scaffold 1 - William Gulliver W 3.stl",
+      "Complaint Scaffold 1 - William Gulliver W 2.stl"
+    ],
+    "stl_file_status": {
+      "Complaint Scaffold 1 - William Gulliver W.stl": {
+        "printed": false,
+        "print_date": null
+      },
+      "Complaint Scaffold 1 - William Gulliver W 3.stl": {
+        "printed": false,
+        "print_date": null
+      },
+      "Complaint Scaffold 1 - William Gulliver W 2.stl": {
+        "printed": false,
+        "print_date": null
+      }
+    },
+    "creation_time": 1750859364.684,
+    "creation_date": "2025-06-25 23:49:24",
+    "status": "deleted",
+    "added_to_queue": "2025-06-26 00:04:56",
+    "deleted_detected": "2025-06-26 00:05:07"
+  }
+}
