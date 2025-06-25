@@ -1,3 +1,87 @@
+"""
+================================================================================
+3D PRINT QUEUE MANAGER - Bytes and Bolts Biomedical Engineering Society
+================================================================================
+
+FUNCTION:
+This script manages a queue system for 3D printing requests from multiple teams.
+It scans a Google Drive folder structure for STL files, tracks print status,
+and provides a GUI for queue management with fair first-come-first-served ordering.
+
+REQUIRED FILE STRUCTURE:
+The script expects the following Google Drive folder structure:
+
+📁 Bytes and Bolts Print Submissions/
+├── 📁 team 1/
+│   ├── 📁 project_name_1/
+│   │   ├── 📄 part1.stl
+│   │   ├── 📄 part2.stl
+│   │   └── 📄 assembly.stl
+│   └── 📁 project_name_2/
+│       └── 📄 gear.stl
+├── 📁 team 2/
+│   └── 📁 robot_arm/
+│       ├── 📄 base.stl
+│       └── 📄 joint.stl
+├── 📁 team 3/
+│   └── 📁 sensor_housing/
+│       └── 📄 case.stl
+...
+└── 📁 team 14/
+    └── 📁 final_project/
+        └── 📄 prototype.stl
+
+FEATURES:
+- Automatic scanning for new print requests (folders containing .stl files)
+- Fair queue ordering (first-come-first-served based on folder creation time)
+- Individual STL file tracking within each request
+- Print status management (waiting, printing, completed, deleted)
+- Multi-selection support for batch operations
+- Auto-refresh with configurable intervals
+- Persistent state storage in JSON format
+- Cross-platform folder opening
+- Detailed progress tracking and statistics
+
+REQUIREMENTS:
+- Python 3.6+
+- tkinter (usually included with Python)
+- Standard library modules: os, json, time, datetime, pathlib, threading
+- Google Drive desktop app (for folder synchronization)
+- Write permissions in the script directory (for print_queue_state.json)
+
+USAGE:
+1. Ensure Google Drive is synced and the folder structure exists
+2. Update the base_directory path in main() function if needed
+3. Run: python print-queue.py
+4. The GUI will open with current queue state
+5. Use "Scan for New Requests" to refresh manually
+6. Double-click requests to manage individual STL files
+7. Use status buttons to update print progress
+
+PERSISTENCE:
+The script saves queue state to 'print_queue_state.json' in the same directory
+as the script. This file contains all request history and print status.
+
+SORTING OPTIONS:
+- Default: Creation time (oldest first) - ensures fair queue ordering
+- Team: Sort by team number
+- Status: Group by print status
+- STL Count: Sort by number of files
+- Request Name: Alphabetical sorting
+
+STATUS DEFINITIONS:
+- waiting: New request, not yet started printing
+- printing: Currently being printed
+- completed: All STL files have been printed
+- deleted: Folder was removed from Google Drive
+
+TEAM FOLDER NAMING:
+Team folders must be named exactly: "team 1", "team 2", ..., "team 14"
+(lowercase "team" followed by space and number)
+
+================================================================================
+"""
+
 import os
 import json
 import time
