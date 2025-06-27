@@ -4,7 +4,7 @@
 
 - `main.py`: Script to run the GUI
 - `config_dialog.py`: Popup window when you start the GUI to choose your servo configuration (start from default or load from config; the `eye-setup.json` was the one used for tech fest if you wanna continue using it)
-- `esp-code-2.txt`: Arduino code that runs on the ESP32 to control the servos (already  uploaded)
+- `esp-code.txt`: Arduino code that runs on the ESP32 to control the servos (already  uploaded)
 
 ## Core 
 - `state_manager.py`: Keeps track of all servo settings and handles changes to update the GUI
