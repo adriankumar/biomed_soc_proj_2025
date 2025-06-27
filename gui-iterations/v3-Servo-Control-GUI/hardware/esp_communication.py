@@ -1,5 +1,3 @@
-#simplified serial communication with esp32 and cpu monitoring
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 import serial

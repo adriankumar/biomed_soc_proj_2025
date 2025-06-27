@@ -1,22 +1,23 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-/* pca9685 configuration */
-Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
+/* pca9685 configuration, this code is already uploaded on the esp */
+Adafruit_PWMServoDriver pca_board1 = Adafruit_PWMServoDriver(0x60); // Board 1: indices 0-15
+Adafruit_PWMServoDriver pca_board2 = Adafruit_PWMServoDriver(0x40); // Board 2: indices 16-31
 
 /* system configuration */
-#define MAX_SERVOS 25
+#define MAX_SERVOS 32
 #define BAUD_RATE 115200
 #define SDA_PIN 44 //RX pin
 #define SCL_PIN 43 //TX pin
 #define PWM_FREQUENCY 50 //fixed frequency for all servos
 
 /* global state */
-int active_num_servos = 25;
+int active_num_servos = 32;
 String input_buffer = "";
 bool command_ready = false;
 
-//initialise system and pca board
+//initialise system and pca boards
 void setup() {
     Serial.begin(BAUD_RATE);
     delay(1000);
@@ -28,13 +29,23 @@ void setup() {
     Serial.print(", scl=");
     Serial.println(SCL_PIN);
     
-    if (!pca.begin()) {
-        Serial.println("pca9685 initialisation failed!");
+    // Initialize board 1 (0x60)
+    if (!pca_board1.begin()) {
+        Serial.println("pca9685 board 1 (0x60) initialisation failed!");
         while (1);
     }
+    pca_board1.setPWMFreq(PWM_FREQUENCY);
+    Serial.println("pca9685 board 1 (0x60) ready");
     
-    pca.setPWMFreq(PWM_FREQUENCY);
-    Serial.print("pca9685 ready with frequency: ");
+    // Initialize board 2 (0x40)
+    if (!pca_board2.begin()) {
+        Serial.println("pca9685 board 2 (0x40) initialisation failed!");
+        while (1);
+    }
+    pca_board2.setPWMFreq(PWM_FREQUENCY);
+    Serial.println("pca9685 board 2 (0x40) ready");
+    
+    Serial.print("both pca9685 boards ready with frequency: ");
     Serial.print(PWM_FREQUENCY);
     Serial.println("hz");
     
@@ -88,7 +99,16 @@ void handle_servo_pulse_command(String command) {
         int pulse_width = command.substring(first_colon + 1).toInt();
         
         if (servo_id >= 0 && servo_id < MAX_SERVOS && pulse_width >= 0 && pulse_width <= 4095) {
-            pca.setPWM(servo_id, 0, pulse_width);
+            // Determine which board and local channel
+            int board_number = servo_id / 16;
+            int local_channel = servo_id % 16;
+            
+            // Send command to appropriate board
+            if (board_number == 0) {
+                pca_board1.setPWM(local_channel, 0, pulse_width);
+            } else if (board_number == 1) {
+                pca_board2.setPWM(local_channel, 0, pulse_width);
+            }
         }
     }
 }

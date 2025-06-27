@@ -1,5 +1,3 @@
-#servo control widgets and management with component groups as order authority
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 import time

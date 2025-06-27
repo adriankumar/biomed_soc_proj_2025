@@ -1,5 +1,3 @@
-#facial tracking system for eye servo control with mediapipe using position-based component lookup
-
 import cv2
 import mediapipe as mp
 import random
@@ -20,6 +18,9 @@ class FacialTracker:
             min_detection_confidence=0.5
         )
         
+        #confidence threshold for face tracking (prevents false positives)
+        self.confidence_threshold = 0.85  #only track faces with 85% confidence or higher
+        
         #tracking state variables
         self.is_tracking = False
         self.detected_faces = []
@@ -35,7 +36,7 @@ class FacialTracker:
         #smoothing variables to prevent servo jumps
         self.previous_horizontal = None
         self.previous_vertical = None
-        self.max_change_per_frame = 15  #maximum pulse width change per frame
+        self.max_change_per_frame = 12  #maximum pulse width change per frame
         
         #camera dimensions - will be set when tracking starts
         self.camera_width = 320
@@ -73,6 +74,7 @@ class FacialTracker:
         self.is_returning_to_default = False
         
         self.log_callback(f"facial tracking started using {h_component} and {v_component}")
+        self.log_callback(f"confidence threshold set to {self.confidence_threshold:.0%}")
     
     #stop facial tracking and return eyes to default positions
     def stop_tracking(self):
@@ -106,9 +108,14 @@ class FacialTracker:
         #clear previous face detections
         self.detected_faces = []
         
-        #process detected faces
+        #process detected faces with confidence filtering
         if results.detections:
             for detection in results.detections:
+                #check confidence threshold before processing face
+                face_confidence = detection.score[0]
+                if face_confidence < self.confidence_threshold:
+                    continue  #skip low confidence detections
+                
                 #get bounding box coordinates
                 bbox = detection.location_data.relative_bounding_box
                 
@@ -122,11 +129,11 @@ class FacialTracker:
                 center_x = x + width // 2
                 center_y = y + height // 2
                 
-                #store face data
+                #store face data for high confidence detections only
                 face_data = {
                     'bbox': (x, y, width, height),
                     'center': (center_x, center_y),
-                    'confidence': detection.score[0]
+                    'confidence': face_confidence
                 }
                 self.detected_faces.append(face_data)
         
@@ -171,7 +178,7 @@ class FacialTracker:
     
     #set random timeout duration for no face detection
     def _set_random_no_face_timeout(self):
-        self.no_face_timeout_duration = random.uniform(2.0, 4.0)  #reset after 2-4 seconds
+        self.no_face_timeout_duration = random.uniform(4.0, 6.0)  #reset after 4-6 seconds
     
     #start returning eyes to default positions
     def _start_return_to_default(self):
@@ -252,8 +259,8 @@ class FacialTracker:
         camera_center_x = self.camera_width / 2
         x_offset = face_x - camera_center_x
         
-        #convert to ratio (-1.0 to +1.0)
-        x_ratio = x_offset / (self.camera_width / 2)
+        #convert to ratio (-1.0 to +1.0) with orientation correction
+        x_ratio = -x_offset / (self.camera_width / 2)
         
         #calculate servo pulse width
         servo_range_half = (h_config["pulse_max"] - h_config["pulse_min"]) / 2
@@ -272,8 +279,8 @@ class FacialTracker:
         camera_center_y = self.camera_height / 2
         y_offset = face_y - camera_center_y
         
-        #convert to ratio (-1.0 to +1.0)
-        y_ratio = y_offset / (self.camera_height / 2)
+        #convert to ratio (-1.0 to +1.0) with orientation correction
+        y_ratio = -y_offset / (self.camera_height / 2)
         
         #calculate servo pulse width
         servo_range_half = (v_config["pulse_max"] - v_config["pulse_min"]) / 2
@@ -340,15 +347,27 @@ class FacialTracker:
         center_x, center_y = target_face['center']
         cv2.circle(frame, (center_x, center_y), 5, (0, 255, 0), -1)
         
-        #draw confidence text
+        #draw confidence text with threshold indicator
         confidence_text = f"tracking: {confidence:.2f}"
         cv2.putText(frame, confidence_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         
-        #draw face count info
+        #draw face count info for high confidence faces only
         face_count_text = f"faces: {len(self.detected_faces)}"
         cv2.putText(frame, face_count_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         
         return frame
+    
+    #set confidence threshold for face tracking
+    def set_confidence_threshold(self, threshold):
+        if 0.0 <= threshold <= 1.0:
+            self.confidence_threshold = threshold
+            self.log_callback(f"confidence threshold updated to {threshold:.0%}")
+            return True
+        return False
+    
+    #get current confidence threshold
+    def get_confidence_threshold(self):
+        return self.confidence_threshold
     
     #check if currently tracking faces
     def is_tracking_active(self):
@@ -361,5 +380,6 @@ class FacialTracker:
             'faces_detected': len(self.detected_faces),
             'current_target': self.current_target_index + 1 if self.detected_faces else 0,
             'switch_interval': self.switch_interval,
-            'returning_to_default': self.is_returning_to_default
-        }   
+            'returning_to_default': self.is_returning_to_default,
+            'confidence_threshold': self.confidence_threshold
+        }

@@ -1,5 +1,3 @@
-#main entry point for servo control system
-
 from config_dialog import ConfigDialog
 from gui.main_window import ServoControlGUI
 
@@ -12,5 +10,7 @@ def main():
     app = ServoControlGUI(config_data)
     app.run()
 
+
+#Run GUI here
 if __name__ == "__main__":
     main()

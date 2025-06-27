@@ -1,5 +1,3 @@
-#real-time camera display for robotic eye positioning with facial tracking
-
 import tkinter as tk
 from tkinter import ttk
 import cv2
@@ -7,7 +5,9 @@ import threading
 import queue
 import time
 from PIL import Image, ImageTk
-from core.facial_tracking import FacialTracker
+# from core.facial_tracking.facial_tracking import FacialTracker #mediapipe; absolute pulse width with 15 incremental; no blinking here
+from core.facial_tracking.facial_tracking_v2_blink import FacialTracker #mediapipe; incremental calculation; blinking here
+
 
 class CameraManager:
     #manages camera enumeration with optimised detection for maximum 3 cameras

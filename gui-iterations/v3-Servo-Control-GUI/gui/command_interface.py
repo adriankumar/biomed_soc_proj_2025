@@ -1,11 +1,8 @@
-#command terminal and console interface
-
 import tkinter as tk
 from tkinter import ttk, scrolledtext
-import re
 from core.validation import COMMAND_HISTORY_LIMIT
 
-#command templates for terminal interface
+#simplified command templates for terminal interface
 COMMAND_TEMPLATES = {
     #connection commands
     "connect": {
@@ -23,24 +20,29 @@ COMMAND_TEMPLATES = {
     "move": {
         "pattern": "move {component} to {value}",
         "description": "move component to specified pulse width",
-        "example": "move head_1 to 1500"
+        "example": "move eye_horizontal to 400"
+    },
+    "move_all": {
+        "pattern": "move all to {value}",
+        "description": "move all components to pulse width (clamped to individual ranges)",
+        "example": "move all to 375"
     },
     
     #component configuration commands
     "set_min": {
         "pattern": "set {component} min {value}",
         "description": "set minimum pulse width for component",
-        "example": "set head_1 min 150"
+        "example": "set eye_horizontal min 150"
     },
     "set_max": {
         "pattern": "set {component} max {value}",
         "description": "set maximum pulse width for component", 
-        "example": "set head_1 max 600"
+        "example": "set eye_horizontal max 600"
     },
     "set_default": {
         "pattern": "set {component} default {value}",
         "description": "set default position for component",
-        "example": "set head_1 default 375"
+        "example": "set eye_horizontal default 375"
     },
     
     #system configuration commands
@@ -53,28 +55,6 @@ COMMAND_TEMPLATES = {
         "pattern": "reset all",
         "description": "reset all servos to default positions",
         "example": "reset all"
-    },
-    
-    #bulk configuration commands
-    "set_all_min": {
-        "pattern": "set all min {value}",
-        "description": "set minimum pulse width for all components",
-        "example": "set all min 150"
-    },
-    "set_all_max": {
-        "pattern": "set all max {value}",
-        "description": "set maximum pulse width for all components",
-        "example": "set all max 600"
-    },
-    "set_all_default": {
-        "pattern": "set all default {value}",
-        "description": "set default position for all components",
-        "example": "set all default 375"
-    },
-    "set_all_move": {
-        "pattern": "set all move {value}",
-        "description": "move all components to specified position",
-        "example": "set all move 375"
     },
     
     #sequence commands
@@ -221,11 +201,7 @@ class CommandTerminal:
             return "break"
         
         #find matching options
-        matches = []
-        
-        for option in self.autocomplete_cache:
-            if option.startswith(current_text):
-                matches.append(option)
+        matches = [option for option in self.autocomplete_cache if option.startswith(current_text)]
         
         if matches:
             if len(matches) == 1:
@@ -239,15 +215,18 @@ class CommandTerminal:
         
         return "break"
     
-    #build autocomplete cache
+    #build autocomplete cache with current component names
     def _build_autocomplete_cache(self):
         self.autocomplete_cache = []
         
-        #add command patterns
+        #add basic command patterns
         for cmd_info in COMMAND_TEMPLATES.values():
-            self.autocomplete_cache.append(cmd_info["pattern"].lower())
+            pattern = cmd_info["pattern"].lower()
+            #add base commands without variables
+            if "{" not in pattern:
+                self.autocomplete_cache.append(pattern)
         
-        #add component-specific patterns
+        #add component-specific patterns with current component names
         for component_name in self.state.servo_configurations.keys():
             self.autocomplete_cache.extend([
                 f"move {component_name} to ",
@@ -256,13 +235,8 @@ class CommandTerminal:
                 f"set {component_name} default "
             ])
         
-        #add bulk patterns
-        self.autocomplete_cache.extend([
-            "set all min ",
-            "set all max ",
-            "set all default ",
-            "set all move "
-        ])
+        #add move all pattern
+        self.autocomplete_cache.append("move all to ")
     
     #process entered command using simplified parsing
     def _process_command(self, command_text):
@@ -279,94 +253,66 @@ class CommandTerminal:
         except Exception as e:
             self.log_callback(f"command error: {str(e)}")
     
-    #simplified command parsing
+    #simplified command parsing with pattern matching
     def _parse_command(self, command_text):
         #exact matches first
-        for cmd_key, cmd_info in COMMAND_TEMPLATES.items():
-            pattern = cmd_info["pattern"].lower()
-            
-            if command_text == pattern:
-                return cmd_key, {}
+        exact_commands = ["connect", "disconnect", "save config", "reset all", "play sequence", 
+                         "clear sequence", "save sequence", "load sequence", "help", "status"]
         
-        #pattern matches with variables
-        for cmd_key, cmd_info in COMMAND_TEMPLATES.items():
-            pattern = cmd_info["pattern"].lower()
-            
-            #simple pattern matching without regex
-            if "{component}" in pattern and "{value}" in pattern:
-                #move/set commands
-                if pattern.startswith("move ") and " to " in command_text:
-                    parts = command_text.split(" to ")
-                    if len(parts) == 2:
-                        component = parts[0].replace("move ", "").strip()
-                        value = parts[1].strip()
-                        return cmd_key, {"component": component, "value": value}
-                
-                elif pattern.startswith("set ") and not pattern.startswith("set all"):
-                    #set component commands
-                    if " min " in command_text:
-                        parts = command_text.split(" min ")
-                        if len(parts) == 2:
-                            component = parts[0].replace("set ", "").strip()
-                            value = parts[1].strip()
-                            return cmd_key, {"component": component, "value": value}
-                    elif " max " in command_text:
-                        parts = command_text.split(" max ")
-                        if len(parts) == 2:
-                            component = parts[0].replace("set ", "").strip()
-                            value = parts[1].strip()
-                            return cmd_key, {"component": component, "value": value}
-                    elif " default " in command_text:
-                        parts = command_text.split(" default ")
-                        if len(parts) == 2:
-                            component = parts[0].replace("set ", "").strip()
-                            value = parts[1].strip()
-                            return cmd_key, {"component": component, "value": value}
-            
-            elif "{value}" in pattern:
-                #single value commands
-                if pattern.startswith("set all "):
-                    if " min " in command_text:
-                        value = command_text.replace("set all min ", "").strip()
-                        return "set_all_min", {"value": value}
-                    elif " max " in command_text:
-                        value = command_text.replace("set all max ", "").strip()
-                        return "set_all_max", {"value": value}
-                    elif " default " in command_text:
-                        value = command_text.replace("set all default ", "").strip()
-                        return "set_all_default", {"value": value}
-                    elif " move " in command_text:
-                        value = command_text.replace("set all move ", "").strip()
-                        return "set_all_move", {"value": value}
-                
-                elif pattern.startswith("record "):
-                    value = command_text.replace("record ", "").strip()
-                    return cmd_key, {"delay": value}
+        if command_text in exact_commands:
+            return command_text.replace(" ", "_"), {}
+        
+        #pattern matches with simplified logic
+        if command_text.startswith("move ") and " to " in command_text:
+            if command_text.startswith("move all to "):
+                value = command_text.replace("move all to ", "").strip()
+                return "move_all", {"value": value}
+            else:
+                parts = command_text.split(" to ")
+                if len(parts) == 2:
+                    component = parts[0].replace("move ", "").strip()
+                    value = parts[1].strip()
+                    return "move", {"component": component, "value": value}
+        
+        elif command_text.startswith("set ") and not command_text.startswith("set all"):
+            #handle set component property commands
+            if " min " in command_text:
+                parts = command_text.split(" min ")
+                if len(parts) == 2:
+                    component = parts[0].replace("set ", "").strip()
+                    value = parts[1].strip()
+                    return "set_property", {"component": component, "property": "min", "value": value}
+            elif " max " in command_text:
+                parts = command_text.split(" max ")
+                if len(parts) == 2:
+                    component = parts[0].replace("set ", "").strip()
+                    value = parts[1].strip()
+                    return "set_property", {"component": component, "property": "max", "value": value}
+            elif " default " in command_text:
+                parts = command_text.split(" default ")
+                if len(parts) == 2:
+                    component = parts[0].replace("set ", "").strip()
+                    value = parts[1].strip()
+                    return "set_property", {"component": component, "property": "default", "value": value}
+        
+        elif command_text.startswith("record "):
+            value = command_text.replace("record ", "").strip()
+            return "record", {"delay": value}
         
         return None
     
-    #execute parsed command
+    #execute parsed command using generic handlers
     def _execute_command(self, command_type, args):
         if command_type == "connect":
             self._cmd_connect()
         elif command_type == "disconnect":
             self._cmd_disconnect()
         elif command_type == "move":
-            self._cmd_move(args.get("component"), args.get("value"))
-        elif command_type == "set_min":
-            self._cmd_set_range(args.get("component"), args.get("value"), None)
-        elif command_type == "set_max":
-            self._cmd_set_range(args.get("component"), None, args.get("value"))
-        elif command_type == "set_default":
-            self._cmd_set_default(args.get("component"), args.get("value"))
-        elif command_type == "set_all_min":
-            self._cmd_set_all_config("min", args.get("value"))
-        elif command_type == "set_all_max":
-            self._cmd_set_all_config("max", args.get("value"))
-        elif command_type == "set_all_default":
-            self._cmd_set_all_config("default", args.get("value"))
-        elif command_type == "set_all_move":
-            self._cmd_set_all_move(args.get("value"))
+            self._execute_component_move(args.get("component"), args.get("value"))
+        elif command_type == "move_all":
+            self._cmd_move_all(args.get("value"))
+        elif command_type == "set_property":
+            self._execute_component_property(args.get("component"), args.get("property"), args.get("value"))
         elif command_type == "save_config":
             self._cmd_save_config()
         elif command_type == "reset_all":
@@ -388,28 +334,8 @@ class CommandTerminal:
         else:
             self.log_callback(f"unimplemented command: {command_type}")
     
-    #command implementations
-    def _cmd_connect(self):
-        if self.state.is_connected:
-            self.log_callback("already connected to serial port")
-        else:
-            success = self.serial_connection.connect()
-            if success:
-                self.log_callback("connected to serial port successfully")
-            else:
-                self.log_callback("failed to connect to serial port")
-    
-    def _cmd_disconnect(self):
-        if not self.state.is_connected:
-            self.log_callback("not connected to serial port")
-        else:
-            success = self.serial_connection.disconnect()
-            if success:
-                self.log_callback("disconnected from serial port")
-            else:
-                self.log_callback("failed to disconnect from serial port")
-    
-    def _cmd_move(self, component_name, value_str):
+    #generic component movement handler
+    def _execute_component_move(self, component_name, value_str):
         if not component_name or not value_str:
             self.log_callback("invalid move command - use: move <component> to <value>")
             return
@@ -427,7 +353,7 @@ class CommandTerminal:
                 return
             
             if self.state.update_servo_position(component_name, pulse_width):
-                if self.state.is_connected:
+                if self.serial_connection.is_connected:
                     servo_index = config["index"]
                     if self.serial_connection.send_command(f"SP:{servo_index}:{pulse_width}"):
                         self.log_callback(f"moved {component_name} to {pulse_width}")
@@ -441,126 +367,111 @@ class CommandTerminal:
         except ValueError:
             self.log_callback(f"invalid pulse width value: {value_str}")
     
-    def _cmd_set_range(self, component_name, min_val, max_val):
-        if not component_name:
-            self.log_callback("component name required")
+    #generic component property setter
+    def _execute_component_property(self, component_name, property_name, value_str):
+        if not component_name or not property_name or not value_str:
+            self.log_callback("invalid set command")
             return
         
         if component_name not in self.state.servo_configurations:
             self.log_callback(f"component '{component_name}' not found")
-            return
-        
-        config = self.state.servo_configurations[component_name]
-        
-        try:
-            if min_val is not None:
-                new_min = int(float(min_val))
-                new_max = config["pulse_max"]
-                action = "minimum"
-            else:
-                new_min = config["pulse_min"]
-                new_max = int(float(max_val))
-                action = "maximum"
-            
-            if self.state.update_component_pulse_range(component_name, new_min, new_max):
-                self.log_callback(f"updated {action} pulse width for {component_name} to {new_min if min_val else new_max}")
-            else:
-                self.log_callback(f"failed to update {action} pulse width for {component_name}")
-                
-        except ValueError:
-            self.log_callback(f"invalid pulse width value")
-    
-    def _cmd_set_default(self, component_name, value_str):
-        if not component_name or not value_str:
-            self.log_callback("invalid set default command")
-            return
-        
-        if component_name not in self.state.servo_configurations:
-            self.log_callback(f"component '{component_name}' not found")
-            return
-        
-        try:
-            default_pos = int(float(value_str))
-            config = self.state.servo_configurations[component_name]
-            
-            if not (config["pulse_min"] <= default_pos <= config["pulse_max"]):
-                self.log_callback(f"default position {default_pos} outside range [{config['pulse_min']}, {config['pulse_max']}] for {component_name}")
-                return
-            
-            if self.state.update_component_setting(component_name, "default_position", default_pos):
-                self.log_callback(f"set default position for {component_name} to {default_pos}")
-            else:
-                self.log_callback(f"failed to set default position for {component_name}")
-                
-        except ValueError:
-            self.log_callback(f"invalid default position value: {value_str}")
-    
-    def _cmd_set_all_config(self, config_type, value_str):
-        if not value_str:
-            self.log_callback(f"value required for set all {config_type}")
             return
         
         try:
             value = int(float(value_str))
-            success_count = 0
-            total_components = len(self.state.servo_configurations)
+            config = self.state.servo_configurations[component_name]
             
-            for component_name in self.state.servo_configurations.keys():
-                config = self.state.servo_configurations[component_name]
-                
-                if config_type == "min":
-                    if value < config["pulse_max"]:
-                        if self.state.update_component_pulse_range(component_name, value, config["pulse_max"]):
-                            success_count += 1
-                elif config_type == "max":
-                    if value > config["pulse_min"]:
-                        if self.state.update_component_pulse_range(component_name, config["pulse_min"], value):
-                            success_count += 1
-                elif config_type == "default":
-                    if config["pulse_min"] <= value <= config["pulse_max"]:
-                        if self.state.update_component_setting(component_name, "default_position", value):
-                            success_count += 1
-            
-            self.log_callback(f"updated {config_type} value to {value} for {success_count}/{total_components} components")
-            
-            if success_count < total_components:
-                self.log_callback(f"warning: {total_components - success_count} components failed validation")
-                
+            if property_name == "min":
+                if value < config["pulse_max"]:
+                    if self.state.update_component_pulse_range(component_name, value, config["pulse_max"]):
+                        self.log_callback(f"updated minimum pulse width for {component_name} to {value}")
+                    else:
+                        self.log_callback(f"failed to update minimum pulse width for {component_name}")
+                else:
+                    self.log_callback(f"minimum value {value} must be less than maximum {config['pulse_max']}")
+                    
+            elif property_name == "max":
+                if value > config["pulse_min"]:
+                    if self.state.update_component_pulse_range(component_name, config["pulse_min"], value):
+                        self.log_callback(f"updated maximum pulse width for {component_name} to {value}")
+                    else:
+                        self.log_callback(f"failed to update maximum pulse width for {component_name}")
+                else:
+                    self.log_callback(f"maximum value {value} must be greater than minimum {config['pulse_min']}")
+                    
+            elif property_name == "default":
+                if config["pulse_min"] <= value <= config["pulse_max"]:
+                    if self.state.update_component_setting(component_name, "default_position", value):
+                        self.log_callback(f"set default position for {component_name} to {value}")
+                    else:
+                        self.log_callback(f"failed to set default position for {component_name}")
+                else:
+                    self.log_callback(f"default position {value} outside range [{config['pulse_min']}, {config['pulse_max']}] for {component_name}")
+                    
         except ValueError:
-            self.log_callback(f"invalid {config_type} value: {value_str}")
+            self.log_callback(f"invalid {property_name} value: {value_str}")
     
-    def _cmd_set_all_move(self, value_str):
+    #move all components with range clamping
+    def _cmd_move_all(self, value_str):
         if not value_str:
             self.log_callback("pulse width value required for move all")
             return
         
         try:
-            pulse_width = int(float(value_str))
+            target_pulse = int(float(value_str))
             success_count = 0
             command_count = 0
             total_components = len(self.state.servo_configurations)
+            clamped_components = 0
             
             for component_name, config in self.state.servo_configurations.items():
-                if config["pulse_min"] <= pulse_width <= config["pulse_max"]:
-                    if self.state.update_servo_position(component_name, pulse_width):
-                        success_count += 1
-                        
-                        if self.state.is_connected:
-                            servo_index = config["index"]
-                            if self.serial_connection.send_command(f"SP:{servo_index}:{pulse_width}"):
-                                command_count += 1
+                #clamp pulse width to component's valid range
+                clamped_pulse = max(config["pulse_min"], min(config["pulse_max"], target_pulse))
+                
+                if clamped_pulse != target_pulse:
+                    clamped_components += 1
+                
+                if self.state.update_servo_position(component_name, clamped_pulse):
+                    success_count += 1
+                    
+                    if self.serial_connection.is_connected:
+                        servo_index = config["index"]
+                        if self.serial_connection.send_command(f"SP:{servo_index}:{clamped_pulse}"):
+                            command_count += 1
             
-            if self.state.is_connected:
-                self.log_callback(f"moved {success_count}/{total_components} components to {pulse_width} (sent {command_count} commands)")
+            if self.serial_connection.is_connected:
+                self.log_callback(f"moved {success_count}/{total_components} components (sent {command_count} commands)")
             else:
-                self.log_callback(f"moved {success_count}/{total_components} components to {pulse_width} (not connected)")
+                self.log_callback(f"moved {success_count}/{total_components} components (not connected)")
             
-            if success_count < total_components:
-                self.log_callback(f"warning: {total_components - success_count} components outside valid range")
+            if clamped_components > 0:
+                self.log_callback(f"note: {clamped_components} components were clamped to their valid ranges")
                 
         except ValueError:
             self.log_callback(f"invalid pulse width value: {value_str}")
     
+    #connection commands
+    def _cmd_connect(self):
+        if self.serial_connection.is_connected:
+            self.log_callback("already connected to serial port")
+        else:
+            success = self.serial_connection.connect()
+            if success:
+                self.log_callback("connected to serial port successfully")
+            else:
+                self.log_callback("failed to connect to serial port")
+    
+    def _cmd_disconnect(self):
+        if not self.serial_connection.is_connected:
+            self.log_callback("not connected to serial port")
+        else:
+            success = self.serial_connection.disconnect()
+            if success:
+                self.log_callback("disconnected from serial port")
+            else:
+                self.log_callback("failed to disconnect from serial port")
+    
+    #system commands
     def _cmd_save_config(self):
         success = self.state.save_config_to_file()
         if success:
@@ -571,7 +482,7 @@ class CommandTerminal:
     def _cmd_reset_all(self):
         reset_commands = self.state.reset_all_servos_to_defaults()
         
-        if self.state.is_connected:
+        if self.serial_connection.is_connected:
             success_count = 0
             for servo_index, pulse_width in reset_commands:
                 if self.serial_connection.send_command(f"SP:{servo_index}:{pulse_width}"):
@@ -581,6 +492,7 @@ class CommandTerminal:
         else:
             self.log_callback(f"reset {len(reset_commands)} servos to default positions (not connected)")
     
+    #sequence commands
     def _cmd_record(self, delay_str):
         if not delay_str:
             self.log_callback("delay value required for recording")
@@ -603,7 +515,7 @@ class CommandTerminal:
             self.log_callback("no sequence to play")
             return
         
-        if not self.state.is_connected:
+        if not self.serial_connection.is_connected:
             self.log_callback("serial connection required for sequence playback")
             return
         
@@ -646,14 +558,14 @@ class CommandTerminal:
         else:
             self.log_callback(f"sequence load failed: {message}")
     
+    #utility commands
     def _cmd_help(self):
         self.log_callback("=== available commands ===")
         
         categories = {
             "connection": ["connect", "disconnect"],
-            "movement": ["move"],
+            "movement": ["move", "move_all"],
             "configuration": ["set_min", "set_max", "set_default", "save_config", "reset_all"],
-            "bulk_configuration": ["set_all_min", "set_all_max", "set_all_default", "set_all_move"],
             "sequence": ["record", "play_sequence", "clear_sequence", "save_sequence", "load_sequence"],
             "utility": ["help", "status"]
         }
@@ -669,7 +581,7 @@ class CommandTerminal:
     
     def _cmd_status(self):
         self.log_callback("=== system status ===")
-        self.log_callback(f"serial connection: {'connected' if self.state.is_connected else 'disconnected'}")
+        self.log_callback(f"serial connection: {'connected' if self.serial_connection.is_connected else 'disconnected'}")
         self.log_callback(f"configured components: {len(self.state.servo_configurations)}")
         self.log_callback(f"sequence keyframes: {self.sequence_manager.get_keyframe_count()}")
         
@@ -680,6 +592,7 @@ class CommandTerminal:
         current_tool = self.content_switcher.get_selected_content()
         self.log_callback(f"current tool: {current_tool}")
     
+    #show detailed help window
     def _show_help(self):
         help_window = tk.Toplevel(self.frame)
         help_window.title("command terminal help")
@@ -693,9 +606,8 @@ class CommandTerminal:
         
         categories = {
             "CONNECTION COMMANDS": ["connect", "disconnect"],
-            "MOVEMENT COMMANDS": ["move"],
+            "MOVEMENT COMMANDS": ["move", "move_all"],
             "CONFIGURATION COMMANDS": ["set_min", "set_max", "set_default", "save_config", "reset_all"],
-            "BULK CONFIGURATION COMMANDS": ["set_all_min", "set_all_max", "set_all_default", "set_all_move"],
             "SEQUENCE COMMANDS": ["record", "play_sequence", "clear_sequence", "save_sequence", "load_sequence"],
             "UTILITY COMMANDS": ["help", "status"]
         }
@@ -715,9 +627,9 @@ class CommandTerminal:
         
         help_content += "NOTES:\n"
         help_content += "  commands are case-insensitive\n"
-        help_content += "  component names must match configured components\n"
+        help_content += "  component names must match configured components exactly\n"
         help_content += "  pulse width values are validated against component ranges\n"
-        help_content += "  bulk commands apply to all components for testing\n"
+        help_content += "  'move all' command clamps values to individual component ranges\n"
         
         help_text.insert(tk.END, help_content)
         help_text.config(state=tk.DISABLED)
@@ -727,7 +639,7 @@ class CommandTerminal:
         if self.command_entry:
             self.command_entry.focus_set()
     
-    #update autocomplete cache when components change
+    #update autocomplete cache when components change (call this when components are renamed)
     def update_autocomplete_cache(self):
         self._build_autocomplete_cache()
 

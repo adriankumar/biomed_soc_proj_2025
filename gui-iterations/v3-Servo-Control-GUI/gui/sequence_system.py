@@ -1,5 +1,3 @@
-#sequence recording and playback system with reliable gui updates
-
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import json

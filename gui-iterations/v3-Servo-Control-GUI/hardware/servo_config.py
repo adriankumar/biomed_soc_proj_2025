@@ -1,5 +1,3 @@
-#hardware configuration for servo control system
-
 from core.validation import DEFAULT_PULSE_MIN, DEFAULT_PULSE_MAX, DEFAULT_PULSE_CENTER
 
 #hardware constants

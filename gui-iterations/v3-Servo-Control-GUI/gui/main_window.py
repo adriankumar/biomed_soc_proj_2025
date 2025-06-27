@@ -1,5 +1,3 @@
-#main gui window and application controller with eye display support
-
 import tkinter as tk
 from tkinter import ttk
 from core.state_manager import ServoState
@@ -10,6 +8,7 @@ from gui.command_interface import CommandTerminal, ConsoleLogger
 from gui.sequence_system import SequenceRecorderWidget
 from core.event_system import subscribe, Events, cleanup
 
+#Content switcher is the additional tools frame
 class ContentSwitcher:
     #manages additional tools and content switching including eye display
     def __init__(self, parent, state, serial_connection, log_callback):
@@ -283,8 +282,8 @@ class ServoControlGUI:
         self._log_message(f"loaded {config_source} servo configuration")
         
         self._log_message("servo control system ready")
-        self._log_message("command terminal ready - type commands below or click help")
-        self._log_message("eye display system available with facial tracking")
+        self._log_message("command terminal ready - type commands above or click help")
+        # self._log_message("eye display system available with facial tracking")
     
     #handle connection state changes
     def _on_connection_changed(self, event_type, *args, **kwargs):

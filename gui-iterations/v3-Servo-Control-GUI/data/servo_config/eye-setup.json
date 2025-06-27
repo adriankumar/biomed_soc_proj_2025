@@ -1,0 +1,221 @@
+{
+  "pwm_frequency": 50,
+  "component_groups": {
+    "head": [
+      "eye_horizontal",
+      "eye_vertical",
+      "left_eyelid",
+      "right_eyelid",
+      "head_5"
+    ],
+    "left_hand": [
+      "left_hand_1",
+      "left_hand_2",
+      "left_hand_3",
+      "left_hand_4",
+      "left_hand_5"
+    ],
+    "right_hand": [
+      "right_hand_1",
+      "right_hand_2",
+      "right_hand_3",
+      "right_hand_4",
+      "right_hand_5"
+    ],
+    "left_elbow": [
+      "left_elbow_1",
+      "left_elbow_2"
+    ],
+    "right_elbow": [
+      "right_elbow_1",
+      "right_elbow_2"
+    ],
+    "left_shoulder": [
+      "left_shoulder_1",
+      "left_shoulder_2",
+      "left_shoulder_3"
+    ],
+    "right_shoulder": [
+      "right_shoulder_1",
+      "right_shoulder_2",
+      "right_shoulder_3"
+    ]
+  },
+  "components": {
+    "eye_horizontal": {
+      "index": 0,
+      "pulse_min": 240,
+      "pulse_max": 530,
+      "default_position": 430,
+      "current_position": 430
+    },
+    "eye_vertical": {
+      "index": 1,
+      "pulse_min": 315,
+      "pulse_max": 500,
+      "default_position": 415,
+      "current_position": 415
+    },
+    "left_eyelid": {
+      "index": 2,
+      "pulse_min": 380,
+      "pulse_max": 550,
+      "default_position": 500,
+      "current_position": 500
+    },
+    "right_eyelid": {
+      "index": 3,
+      "pulse_min": 130,
+      "pulse_max": 275,
+      "default_position": 168,
+      "current_position": 168
+    },
+    "head_5": {
+      "index": 4,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_hand_1": {
+      "index": 5,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_hand_2": {
+      "index": 6,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_hand_3": {
+      "index": 7,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_hand_4": {
+      "index": 8,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_hand_5": {
+      "index": 9,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_hand_1": {
+      "index": 10,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_hand_2": {
+      "index": 11,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_hand_3": {
+      "index": 12,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_hand_4": {
+      "index": 13,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_hand_5": {
+      "index": 14,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_elbow_1": {
+      "index": 15,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_elbow_2": {
+      "index": 16,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_elbow_1": {
+      "index": 17,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_elbow_2": {
+      "index": 18,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_shoulder_1": {
+      "index": 19,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_shoulder_2": {
+      "index": 20,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "left_shoulder_3": {
+      "index": 21,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_shoulder_1": {
+      "index": 22,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_shoulder_2": {
+      "index": 23,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    },
+    "right_shoulder_3": {
+      "index": 24,
+      "pulse_min": 150,
+      "pulse_max": 600,
+      "default_position": 375,
+      "current_position": 375
+    }
+  }
+}

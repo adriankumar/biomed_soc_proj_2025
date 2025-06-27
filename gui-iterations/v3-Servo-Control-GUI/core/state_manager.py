@@ -1,5 +1,3 @@
-#centralised state management for servo control system with component groups as order authority
-
 import json
 from tkinter import filedialog, messagebox
 from hardware.servo_config import DEFAULT_COMPONENT_CONFIGS, MAX_SERVOS, PWM_FREQUENCY, COMPONENT_GROUPS

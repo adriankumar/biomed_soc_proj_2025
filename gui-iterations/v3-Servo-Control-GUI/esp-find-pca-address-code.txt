@@ -1,0 +1,53 @@
+#include <Wire.h>
+/*Code to find pca addresses*/
+/* I2C configuration */
+#define SDA_PIN 44 //RX pin
+#define SCL_PIN 43 //TX pin
+#define BAUD_RATE 115200
+
+void setup() {
+    Serial.begin(BAUD_RATE);
+    delay(2000);  // wait for serial monitor
+    
+    Serial.println("=== I2C ADDRESS SCANNER ===");
+    
+    // initialize I2C
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Serial.print("I2C initialized on SDA=");
+    Serial.print(SDA_PIN);
+    Serial.print(", SCL=");
+    Serial.println(SCL_PIN);
+    
+    Serial.println("scanning...");
+    
+    int devices_found = 0;
+    
+    // scan addresses 1 to 127
+    for (byte address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        byte result = Wire.endTransmission();
+        
+        if (result == 0) {
+            // device found
+            Serial.print("device found at address 0x");
+            if (address < 16) Serial.print("0");  // add leading zero
+            Serial.println(address, HEX);
+            devices_found++;
+        }
+    }
+    
+    Serial.println("scan complete");
+    Serial.print("total devices found: ");
+    Serial.println(devices_found);
+    
+    if (devices_found == 0) {
+        Serial.println("no I2C devices found - check wiring and power");
+    }
+    
+    Serial.println("press RESET to scan again");
+}
+
+void loop() {
+    // empty loop - press reset to scan again
+    delay(1000);
+}

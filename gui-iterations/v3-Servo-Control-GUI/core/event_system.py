@@ -1,5 +1,3 @@
-#simplified event system for reliable gui updates
-
 from collections import defaultdict
 
 class EventSystem:
