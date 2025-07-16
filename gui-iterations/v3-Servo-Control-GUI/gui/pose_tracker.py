@@ -6,8 +6,7 @@ import numpy as np
 import concurrent.futures
 
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Init MediaPipe modules
 mp_drawing = mp.solutions.drawing_utils
@@ -16,15 +15,19 @@ mp_holistic = mp.solutions.holistic
 mp_face_mesh = mp.solutions.face_mesh
 
 # Initialize Matplotlib for 3D plotting
-def init_3d_plot():
-    fig = plt.figure()
+def init_3d_plot(parent):
+    fig = Figure()
     ax = fig.add_subplot(111, projection='3d')
-    plt.ion()
-    plt.show()
     scatter_dict = {}
-    return fig, ax, scatter_dict
 
-def update_3d_plot(ax, scatter_dict, coord_dict):
+    canvas = FigureCanvasTkAgg(fig, master=parent)
+    canvas.draw()
+    canvas_widget = canvas.get_tk_widget()
+
+    return fig, ax, scatter_dict, canvas, canvas_widget
+
+
+def update_3d_plot(ax, scatter_dict, coord_dict, canvas_obj):
     ax.clear()
 
     # Axes settings
@@ -38,7 +41,7 @@ def update_3d_plot(ax, scatter_dict, coord_dict):
 
     # Debug: Print pose coords
     pose = coord_dict.get('pose', {})
-    print("\n[DEBUG] Pose Coordinates:")
+
     for idx, (x, y, z) in pose.items():
         print(f"  ID {idx}: x={x:.2f}, y={y:.2f}, z={z:.2f}")
 
@@ -72,7 +75,6 @@ def update_3d_plot(ax, scatter_dict, coord_dict):
             if not any(np.isnan([x1, y1, z1, x2, y2, z2])):
                 ax.plot([x1, x2], [1 - y1, 1 - y2], [-z1, -z2], color='gray', linewidth=2)
 
-    
     lh = coord_dict.get('left_hand', {})
     rh = coord_dict.get('right_hand', {})
 
@@ -86,9 +88,53 @@ def update_3d_plot(ax, scatter_dict, coord_dict):
     # Optional: connect shoulders to hips for better orientation
     connect(pose, 11, 23)  # Left shoulder to hip
     connect(pose, 12, 24)  # Right shoulder to hip
+    
+    # Left hand connections
+    connect(lh, 0, 5)   # Wrist to Index MCP
+    connect(lh, 0, 9)   # Wrist to Middle MCP
+    connect(lh, 0, 13)  # Wrist to Ring MCP
+    connect(lh, 0, 17)  # Wrist to Pinky MCP
 
-    plt.draw()
-    plt.pause(0.001)
+    connect(lh, 5, 6)
+    connect(lh, 6, 7)
+    connect(lh, 7, 8)
+
+    connect(lh, 9, 10)
+    connect(lh, 10, 11)
+    connect(lh, 11, 12)
+
+    connect(lh, 13, 14)
+    connect(lh, 14, 15)
+    connect(lh, 15, 16)
+
+    connect(lh, 17, 18)
+    connect(lh, 18, 19)
+    connect(lh, 19, 20)
+
+    # Right hand connections
+    connect(rh, 0, 5)
+    connect(rh, 0, 9)
+    connect(rh, 0, 13)
+    connect(rh, 0, 17)
+
+    connect(rh, 5, 6)
+    connect(rh, 6, 7)
+    connect(rh, 7, 8)
+
+    connect(rh, 9, 10)
+    connect(rh, 10, 11)
+    connect(rh, 11, 12)
+
+    connect(rh, 13, 14)
+    connect(rh, 14, 15)
+    connect(rh, 15, 16)
+
+    connect(rh, 17, 18)
+    connect(rh, 18, 19)
+    connect(rh, 19, 20)
+
+    canvas_obj.draw()
+
 
 
 

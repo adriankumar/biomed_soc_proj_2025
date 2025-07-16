@@ -28,6 +28,15 @@ class ContentSwitcher:
         #eye display components
         self.eye_display_widget = None
         
+        #3d Visualisation components
+        self.visualisation_widget = None
+        self.ax = None
+        self.scatter_dict = None
+        self.fig = None
+        self.canvas_obj = None
+        self.canvas_widget = None
+        self.coord_dict_3d = None
+        
         self._create_ui()
     
     #set dependencies for sequence recording
@@ -126,11 +135,118 @@ class ContentSwitcher:
     #create placeholder content
     # Visualisation for Pose Estimation throught the box plot
     def _create_visualisation_placeholder(self):
-        self._create_placeholder(
-            "pose estimation visualisation",
-            "blue",
-            "3D pose estimation visualisation not available"
-        )
+        self._create_placeholder("pose estimation visualisation", "gray")
+        
+        if self.visualisation_widget is None:
+            from gui.pose_tracker import init_3d_plot
+            from gui.pose_tracker import draw_selected_dots
+            from gui.pose_tracker import update_3d_plot
+            
+            from gui.pose_tracker import calculate_left_shoulder_servo_1, calculate_left_shoulder_servo_2, calculate_left_shoulder_servo_3
+            from gui.pose_tracker import calculate_left_elbow_servo_1, calculate_left_elbow_servo_2
+            from gui.pose_tracker import left_hand_servo_thumb, left_hand_servo_index, left_hand_servo_middle, left_hand_servo_ring, left_hand_servo_pinky   
+            
+            from gui.pose_tracker import get_selected_coords_for_3d_plot
+            
+            import cv2
+            import mediapipe as mp
+            import matplotlib.pyplot as plt
+            import numpy as np
+            import concurrent.futures
+            
+            # Init MediaPipe modules
+            mp_drawing = mp.solutions.drawing_utils
+            mp_drawing_styles = mp.solutions.drawing_styles
+            mp_holistic = mp.solutions.holistic
+            
+            cap = cv2.VideoCapture(0)
+            
+            with mp_holistic.Holistic(
+                model_complexity=1,
+                min_detection_confidence=0.7,
+                min_tracking_confidence=0.7
+            ) as holistic:
+            
+                # Initialize 3D plot
+                self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(self.content_container)
+                self.canvas_widget.pack(expand=True, fill="both")
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+
+                    while cap.isOpened():
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+
+                        # Convert to RGB
+                        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        image.flags.writeable = False
+                        results = holistic.process(image)
+
+                        # Convert back to BGR
+                        image.flags.writeable = True
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                        
+                        self.coord_dict_3d = get_selected_coords_for_3d_plot(results)
+                        
+                        update_3d_plot(self.ax, self.scatter_dict, self.coord_dict_3d, self.canvas_obj)
+                        
+                
+                        # Calculate angles in parallel
+                        futures = [
+                            executor.submit(calculate_left_shoulder_servo_1, self.coord_dict_3d ),
+                            executor.submit(calculate_left_shoulder_servo_2, self.coord_dict_3d ),
+                            executor.submit(calculate_left_shoulder_servo_3, self.coord_dict_3d ),
+                            executor.submit(calculate_left_elbow_servo_1, self.coord_dict_3d ),
+                            executor.submit(calculate_left_elbow_servo_2, self.coord_dict_3d ),
+                            executor.submit(left_hand_servo_thumb, self.coord_dict_3d ),
+                            executor.submit(left_hand_servo_index, self.coord_dict_3d ),
+                            executor.submit(left_hand_servo_middle, self.coord_dict_3d ),
+                            executor.submit(left_hand_servo_ring, self.coord_dict_3d ),
+                            executor.submit(left_hand_servo_pinky, self.coord_dict_3d ),
+                        ]
+                        results_angles = [f.result() for f in futures]
+
+                        # Unpack results as needed
+                        (left_shoulder_servo_1, left_shoulder_servo_2, left_shoulder_servo_3,
+                        left_elbow_servo_1, left_elbow_servo_2,
+                        left_hand_servo_thumb_angle, left_hand_servo_index_angle,
+                        left_hand_servo_middle_angle, left_hand_servo_ring_angle,
+                        left_hand_servo_pinky_angle) = results_angles
+                        
+                        # Print results
+                        print("Left Shoulder Servo 1 Angle:", left_shoulder_servo_1)
+                        print("Left Shoulder Servo 2 Angle:", left_shoulder_servo_2)
+                        print("Left Shoulder Servo 3 Angle:", left_shoulder_servo_3)
+                        print("Left Elbow Servo 1 Angle:", left_elbow_servo_1)
+                        print("Left Elbow Servo 2 Angle:", left_elbow_servo_2)
+                        print("Left Hand Thumb Servo Angle:", left_hand_servo_thumb_angle)
+                        print("Left Hand Index Servo Angle:", left_hand_servo_index_angle)
+                        print("Left Hand Middle Servo Angle:", left_hand_servo_middle_angle)
+                        print("Left Hand Ring Servo Angle:", left_hand_servo_ring_angle)
+                        print("Left Hand Pinky Servo Angle:", left_hand_servo_pinky_angle)
+                    
+                        # Placeholder for future visualisation logic
+                        ttk.Label(
+                            self.content_container, 
+                            text="3D Pose Estimation Visualisation",
+                            font=("Arial", 14, "bold"),
+                            foreground="blue"
+                        ).pack(pady=10)
+                    
+                    
+                        # Show the annotated frame
+                        cv2.imshow("Hand + Body Detector", image)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            break
+            
+            cap.release()
+            cv2.destroyAllWindows()
+            plt.ioff()
+            plt.close()
+            
+            
+            
     
     def _create_sequence_unavailable_placeholder(self):
         self._create_placeholder("sequence recording unavailable", "red", "dependencies not initialised")
