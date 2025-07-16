@@ -124,8 +124,13 @@ class ContentSwitcher:
         self.eye_display_widget.show()
     
     #create placeholder content
+    # Visualisation for Pose Estimation throught the box plot
     def _create_visualisation_placeholder(self):
-        self._create_placeholder("TBI: visualisation", "gray")
+        self._create_placeholder(
+            "pose estimation visualisation",
+            "blue",
+            "3D pose estimation visualisation not available"
+        )
     
     def _create_sequence_unavailable_placeholder(self):
         self._create_placeholder("sequence recording unavailable", "red", "dependencies not initialised")
