@@ -42,8 +42,8 @@ def update_3d_plot(ax, scatter_dict, coord_dict, canvas_obj):
     # Debug: Print pose coords
     pose = coord_dict.get('pose', {})
 
-    for idx, (x, y, z) in pose.items():
-        print(f"  ID {idx}: x={x:.2f}, y={y:.2f}, z={z:.2f}")
+    """ for idx, (x, y, z) in pose.items():
+        print(f"  ID {idx}: x={x:.2f}, y={y:.2f}, z={z:.2f}") """
 
     # Plot scatter points with flipped Y and Z
     def plot_points(label, coords, color='b'):
@@ -252,8 +252,9 @@ def calculate_angle(v1, v2):
         return 0.0  # Avoid division by zero
 
     cosine_angle = np.clip(dot / norms, -1.0, 1.0)
-    angle = np.arccos(cosine_angle)
-    return angle  # In radians
+    angle_rad = np.arccos(cosine_angle)
+    angle_deg = np.degrees(angle_rad)
+    return angle_deg  # In degrees
 
 
 

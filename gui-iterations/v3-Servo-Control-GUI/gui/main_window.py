@@ -7,6 +7,8 @@ from gui.servo_controls import ServoControlsManager
 from gui.command_interface import CommandTerminal, ConsoleLogger
 from gui.sequence_system import SequenceRecorderWidget
 from core.event_system import subscribe, Events, cleanup
+import threading
+import time
 
 #Content switcher is the additional tools frame
 class ContentSwitcher:
@@ -36,6 +38,9 @@ class ContentSwitcher:
         self.canvas_obj = None
         self.canvas_widget = None
         self.coord_dict_3d = None
+        
+        self.streaming_active = False
+        self.stream_thread = None
         
         self._create_ui()
     
@@ -135,30 +140,27 @@ class ContentSwitcher:
     #create placeholder content
     # Visualisation for Pose Estimation throught the box plot
     def _create_visualisation_placeholder(self):
-        self._create_placeholder("pose estimation visualisation", "gray")
+        from gui.pose_tracker import init_3d_plot
+        from gui.pose_tracker import draw_selected_dots
+        from gui.pose_tracker import update_3d_plot
+        from gui.pose_tracker import calculate_left_shoulder_servo_1, calculate_left_shoulder_servo_2, calculate_left_shoulder_servo_3
+        from gui.pose_tracker import calculate_left_elbow_servo_1, calculate_left_elbow_servo_2
+        from gui.pose_tracker import left_hand_servo_thumb, left_hand_servo_index, left_hand_servo_middle, left_hand_servo_ring, left_hand_servo_pinky   
+        from gui.pose_tracker import get_selected_coords_for_3d_plot
+        from gui.pose_tracker import draw_selected_dots
         
-        if self.visualisation_widget is None:
-            from gui.pose_tracker import init_3d_plot
-            from gui.pose_tracker import draw_selected_dots
-            from gui.pose_tracker import update_3d_plot
-            
-            from gui.pose_tracker import calculate_left_shoulder_servo_1, calculate_left_shoulder_servo_2, calculate_left_shoulder_servo_3
-            from gui.pose_tracker import calculate_left_elbow_servo_1, calculate_left_elbow_servo_2
-            from gui.pose_tracker import left_hand_servo_thumb, left_hand_servo_index, left_hand_servo_middle, left_hand_servo_ring, left_hand_servo_pinky   
-            
-            from gui.pose_tracker import get_selected_coords_for_3d_plot
-            
-            import cv2
-            import mediapipe as mp
-            import matplotlib.pyplot as plt
-            import numpy as np
-            import concurrent.futures
-            
-            # Init MediaPipe modules
-            mp_drawing = mp.solutions.drawing_utils
-            mp_drawing_styles = mp.solutions.drawing_styles
-            mp_holistic = mp.solutions.holistic
-            
+        import cv2
+        import mediapipe as mp
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import concurrent.futures
+        
+        # Init MediaPipe modules
+        mp_drawing = mp.solutions.drawing_utils
+        mp_drawing_styles = mp.solutions.drawing_styles
+        mp_holistic = mp.solutions.holistic
+        
+        def stream_loop(ax, scatter_dict, canvas_obj):
             cap = cv2.VideoCapture(0)
             
             with mp_holistic.Holistic(
@@ -167,12 +169,10 @@ class ContentSwitcher:
                 min_tracking_confidence=0.7
             ) as holistic:
             
-                # Initialize 3D plot
-                self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(self.content_container)
-                self.canvas_widget.pack(expand=True, fill="both")
-                
+  
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-
+                    last_print_time = time.time()  # Add this before the loop starts
+                    
                     while cap.isOpened():
                         ret, frame = cap.read()
                         if not ret:
@@ -187,9 +187,12 @@ class ContentSwitcher:
                         image.flags.writeable = True
                         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
                         
+                        # Draw and get landmark coordinates
+                        coord_dict = draw_selected_dots(image, results)
+                        
                         self.coord_dict_3d = get_selected_coords_for_3d_plot(results)
                         
-                        update_3d_plot(self.ax, self.scatter_dict, self.coord_dict_3d, self.canvas_obj)
+                        update_3d_plot(ax, scatter_dict, self.coord_dict_3d, canvas_obj)
                         
                 
                         # Calculate angles in parallel
@@ -213,27 +216,16 @@ class ContentSwitcher:
                         left_hand_servo_thumb_angle, left_hand_servo_index_angle,
                         left_hand_servo_middle_angle, left_hand_servo_ring_angle,
                         left_hand_servo_pinky_angle) = results_angles
-                        
-                        # Print results
-                        print("Left Shoulder Servo 1 Angle:", left_shoulder_servo_1)
-                        print("Left Shoulder Servo 2 Angle:", left_shoulder_servo_2)
-                        print("Left Shoulder Servo 3 Angle:", left_shoulder_servo_3)
-                        print("Left Elbow Servo 1 Angle:", left_elbow_servo_1)
-                        print("Left Elbow Servo 2 Angle:", left_elbow_servo_2)
-                        print("Left Hand Thumb Servo Angle:", left_hand_servo_thumb_angle)
-                        print("Left Hand Index Servo Angle:", left_hand_servo_index_angle)
-                        print("Left Hand Middle Servo Angle:", left_hand_servo_middle_angle)
-                        print("Left Hand Ring Servo Angle:", left_hand_servo_ring_angle)
-                        print("Left Hand Pinky Servo Angle:", left_hand_servo_pinky_angle)
-                    
-                        # Placeholder for future visualisation logic
-                        ttk.Label(
-                            self.content_container, 
-                            text="3D Pose Estimation Visualisation",
-                            font=("Arial", 14, "bold"),
-                            foreground="blue"
-                        ).pack(pady=10)
-                    
+
+                        # Inside while loop, after unpacking results
+                        current_time = time.time()
+                        if current_time - last_print_time >= 0.5:
+                            print("___________________________________________________________________________________________________________________________________________________________________________________________________-")
+                            """ print(f"Left Shoulder Servo 1 Angle: {left_shoulder_servo_1}, Left Shoulder Servo 2 Angle: {left_shoulder_servo_2}, Left Shoulder Servo 3 Angle: {left_shoulder_servo_3}") """
+                            """print(f"Left Elbow Servo 1 Angle: {left_elbow_servo_1}, Left Elbow Servo 2 Angle: {left_elbow_servo_2}")"""
+                            print(f"Thumb: {left_hand_servo_thumb_angle}, Index: {left_hand_servo_index_angle}, Middle: {left_hand_servo_middle_angle}, Ring: {left_hand_servo_ring_angle}, Pinky: {left_hand_servo_pinky_angle}") 
+                            print("___________________________________________________________________________________________________________________________________________________________________________________________________-")
+                            last_print_time = current_time
                     
                         # Show the annotated frame
                         cv2.imshow("Hand + Body Detector", image)
@@ -244,9 +236,20 @@ class ContentSwitcher:
             cv2.destroyAllWindows()
             plt.ioff()
             plt.close()
+                
+        if self.visualisation_widget is None:
             
+            self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(self.content_container)
+            self.canvas_widget.pack(expand=True, fill="both")
+            self.visualisation_widget = self.canvas_widget
             
-            
+            threading.Thread(
+                target=stream_loop,
+                args=(self.ax, self.scatter_dict, self.canvas_obj),
+                daemon=True
+            ).start()
+ 
+                      
     
     def _create_sequence_unavailable_placeholder(self):
         self._create_placeholder("sequence recording unavailable", "red", "dependencies not initialised")
