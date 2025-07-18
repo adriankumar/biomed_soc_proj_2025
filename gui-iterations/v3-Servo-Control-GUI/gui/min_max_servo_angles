@@ -1,0 +1,11 @@
+=== Final Servo Angle Ranges ===
+Shoulder_1 -> Min: 2.14, Max: 175.40
+Shoulder_2 -> Min: 0.41, Max: 162.53
+Shoulder_3 -> Min: 0.80, Max: 179.86
+Elbow_1 -> Min: 1.20, Max: 170.72
+Elbow_2 -> Min: 0.26, Max: 86.89
+Thumb -> Min: 1.69, Max: 59.13
+Index -> Min: 1.59, Max: 139.83
+Middle -> Min: 1.12, Max: 136.33
+Ring -> Min: 0.14, Max: 141.74
+Pinky -> Min: 0.85, Max: 150.46

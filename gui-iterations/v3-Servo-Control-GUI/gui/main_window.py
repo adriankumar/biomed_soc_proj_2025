@@ -171,6 +171,18 @@ class ContentSwitcher:
             
   
                 with concurrent.futures.ThreadPoolExecutor() as executor:
+                    
+                    angle_mins = {
+                        "shoulder_1": float("inf"), "shoulder_2": float("inf"), "shoulder_3": float("inf"),
+                        "elbow_1": float("inf"), "elbow_2": float("inf"),
+                        "thumb": float("inf"), "index": float("inf"), "middle": float("inf"), "ring": float("inf"), "pinky": float("inf")
+                    }
+                    angle_maxs = {
+                        "shoulder_1": float("-inf"), "shoulder_2": float("-inf"), "shoulder_3": float("-inf"),
+                        "elbow_1": float("-inf"), "elbow_2": float("-inf"),
+                        "thumb": float("-inf"), "index": float("-inf"), "middle": float("-inf"), "ring": float("-inf"), "pinky": float("-inf")
+                    }
+                    
                     last_print_time = time.time()  # Add this before the loop starts
                     
                     while cap.isOpened():
@@ -181,7 +193,8 @@ class ContentSwitcher:
                         # Convert to RGB
                         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         image.flags.writeable = False
-                        results = holistic.process(image)
+                        results = holistic.process(image)                
+                        
 
                         # Convert back to BGR
                         image.flags.writeable = True
@@ -216,20 +229,62 @@ class ContentSwitcher:
                         left_hand_servo_thumb_angle, left_hand_servo_index_angle,
                         left_hand_servo_middle_angle, left_hand_servo_ring_angle,
                         left_hand_servo_pinky_angle) = results_angles
+                        
+                        
+                        # Update min/max
+                        if left_shoulder_servo_1 is not None:
+                            angle_mins["shoulder_1"] = min(angle_mins["shoulder_1"], left_shoulder_servo_1)
+                            angle_maxs["shoulder_1"] = max(angle_maxs["shoulder_1"], left_shoulder_servo_1)
+                        
+                        if left_shoulder_servo_2 is not None:
+                            angle_mins["shoulder_2"] = min(angle_mins["shoulder_2"], left_shoulder_servo_2)
+                            angle_maxs["shoulder_2"] = max(angle_maxs["shoulder_2"], left_shoulder_servo_2)
+
+                        if left_shoulder_servo_3 is not None:
+                            angle_mins["shoulder_3"] = min(angle_mins["shoulder_3"], left_shoulder_servo_3)
+                            angle_maxs["shoulder_3"] = max(angle_maxs["shoulder_3"], left_shoulder_servo_3)
+                        
+                        if left_elbow_servo_1 is not None:
+                            angle_mins["elbow_1"] = min(angle_mins["elbow_1"], left_elbow_servo_1)
+                            angle_maxs["elbow_1"] = max(angle_maxs["elbow_1"], left_elbow_servo_1)
+                    
+                        if left_elbow_servo_2 is not None:
+                            angle_mins["elbow_2"] = min(angle_mins["elbow_2"], left_elbow_servo_2)
+                            angle_maxs["elbow_2"] = max(angle_maxs["elbow_2"], left_elbow_servo_2)
+
+                        if left_hand_servo_thumb_angle is not None:
+                            angle_mins["thumb"] = min(angle_mins["thumb"], left_hand_servo_thumb_angle)
+                            angle_maxs["thumb"] = max(angle_maxs["thumb"], left_hand_servo_thumb_angle)
+
+                        if left_hand_servo_index_angle is not None:
+                            angle_mins["index"] = min(angle_mins["index"], left_hand_servo_index_angle)
+                            angle_maxs["index"] = max(angle_maxs["index"], left_hand_servo_index_angle)
+
+                        if left_hand_servo_middle_angle is not None:    
+                            angle_mins["middle"] = min(angle_mins["middle"], left_hand_servo_middle_angle)
+                            angle_maxs["middle"] = max(angle_maxs["middle"], left_hand_servo_middle_angle)
+
+                        if left_hand_servo_ring_angle is not None:
+                            angle_mins["ring"] = min(angle_mins["ring"], left_hand_servo_ring_angle)
+                            angle_maxs["ring"] = max(angle_maxs["ring"], left_hand_servo_ring_angle)
+
+                        if left_hand_servo_pinky_angle is not None:
+                            angle_mins["pinky"] = min(angle_mins["pinky"], left_hand_servo_pinky_angle)
+                            angle_maxs["pinky"] = max(angle_maxs["pinky"], left_hand_servo_pinky_angle)           
+                        
 
                         # Inside while loop, after unpacking results
                         current_time = time.time()
                         if current_time - last_print_time >= 0.5:
-                            print("___________________________________________________________________________________________________________________________________________________________________________________________________-")
-                            """ print(f"Left Shoulder Servo 1 Angle: {left_shoulder_servo_1}, Left Shoulder Servo 2 Angle: {left_shoulder_servo_2}, Left Shoulder Servo 3 Angle: {left_shoulder_servo_3}") """
-                            """print(f"Left Elbow Servo 1 Angle: {left_elbow_servo_1}, Left Elbow Servo 2 Angle: {left_elbow_servo_2}")"""
-                            print(f"Thumb: {left_hand_servo_thumb_angle}, Index: {left_hand_servo_index_angle}, Middle: {left_hand_servo_middle_angle}, Ring: {left_hand_servo_ring_angle}, Pinky: {left_hand_servo_pinky_angle}") 
-                            print("___________________________________________________________________________________________________________________________________________________________________________________________________-")
                             last_print_time = current_time
                     
                         # Show the annotated frame
                         cv2.imshow("Hand + Body Detector", image)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
+                            
+                            print("\n=== Final Servo Angle Ranges ===")
+                            for joint in angle_mins:
+                                print(f"{joint.capitalize()} -> Min: {angle_mins[joint]:.2f}, Max: {angle_maxs[joint]:.2f}")
                             break
             
             cap.release()
