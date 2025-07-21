@@ -1,0 +1,19 @@
+name: robot-env-gpu
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - numpy
+  - matplotlib
+  - pyqt=5.15.9
+  - vs2015_runtime
+  - psutil
+  - pip:
+      - bleak==0.22.3
+      - keyboard==0.13.5
+      - tensorflow==2.12.0
+      - mediapipe==0.10.21
+      - protobuf==4.25.6
+      - opencv-contrib-python==4.11.0.86

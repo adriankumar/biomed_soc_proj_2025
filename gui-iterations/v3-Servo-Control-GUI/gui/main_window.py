@@ -177,10 +177,7 @@ class ContentSwitcher:
         mp_drawing = mp.solutions.drawing_utils
         mp_drawing_styles = mp.solutions.drawing_styles
         mp_holistic = mp.solutions.holistic
-        
-        
-            
-            
+
         def stream_loop(ax, scatter_dict, canvas_obj):
             cap = cv2.VideoCapture(0)
             
@@ -190,7 +187,7 @@ class ContentSwitcher:
                 min_tracking_confidence=0.7
             ) as holistic:
             
-  
+
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     
                     angle_mins = {
@@ -215,7 +212,6 @@ class ContentSwitcher:
                         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         image.flags.writeable = False
                         results = holistic.process(image)                
-                        
 
                         # Convert back to BGR
                         image.flags.writeable = True
@@ -227,8 +223,7 @@ class ContentSwitcher:
                         self.coord_dict_3d = get_selected_coords_for_3d_plot(results)
                         
                         update_3d_plot(ax, scatter_dict, self.coord_dict_3d, canvas_obj)
-                        
-                
+
                         # Calculate angles in parallel
                         futures = [
                             executor.submit(calculate_left_shoulder_servo_1, self.coord_dict_3d ),
@@ -250,7 +245,6 @@ class ContentSwitcher:
                         left_hand_servo_thumb_angle, left_hand_servo_index_angle,
                         left_hand_servo_middle_angle, left_hand_servo_ring_angle,
                         left_hand_servo_pinky_angle) = results_angles
-                        
                         
                         # Update min/max
                         if left_shoulder_servo_1 is not None:
@@ -309,7 +303,6 @@ class ContentSwitcher:
                             self.update_servo_log("left_Ring", left_hand_servo_ring_angle)
                             self.update_servo_log("left_Pinky", left_hand_servo_pinky_angle)
 
-                            
                             last_print_time = current_time
                     
                         # Show the annotated frame
