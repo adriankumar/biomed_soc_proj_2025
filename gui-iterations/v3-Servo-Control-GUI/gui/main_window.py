@@ -137,23 +137,15 @@ class ContentSwitcher:
         
         self.eye_display_widget.show()
     
-    
-    def update_servo_log(self, joint_name, angle):
-        if not hasattr(self, "servo_log_widget") or self.servo_log_widget is None or angle is None:
+
+    def update_servo_log(self, message):
+        if not hasattr(self, "servo_log_widget") or self.servo_log_widget is None or message is None:
             return
-                
-        # Enable the widget for writing
         self.servo_log_widget.config(state="normal")
-
-        # Format and insert the log line
-        self.servo_log_widget.insert("end", f"{joint_name} ---> {angle:.2f} degrees\n")
-
-        # Scroll to the end automatically
+        self.servo_log_widget.insert("end", message + "\n")
         self.servo_log_widget.see("end")
-
-        # Disable to prevent user edits
         self.servo_log_widget.config(state="disabled")
-    
+
     
     #create placeholder content
     # Visualisation for Pose Estimation throught the box plot
@@ -291,17 +283,39 @@ class ContentSwitcher:
                         # Inside while loop, after unpacking results
                         current_time = time.time()
                         if current_time - last_print_time >= 0.5:
-                            
-                            self.update_servo_log("Left_Shoulder_1", left_shoulder_servo_1)
-                            self.update_servo_log("Left_Shoulder_2", left_shoulder_servo_2)
-                            self.update_servo_log("Left_Shoulder_3", left_shoulder_servo_3)
-                            self.update_servo_log("Left_Elbow_1", left_elbow_servo_1)
-                            self.update_servo_log("Left_Elbow_2", left_elbow_servo_2)
-                            self.update_servo_log("Left_Thumb", left_hand_servo_thumb_angle)
-                            self.update_servo_log("Left_Index", left_hand_servo_index_angle)
-                            self.update_servo_log("Left_Middle", left_hand_servo_middle_angle)
-                            self.update_servo_log("left_Ring", left_hand_servo_ring_angle)
-                            self.update_servo_log("left_Pinky", left_hand_servo_pinky_angle)
+
+                            self.update_servo_log("---------------------------------------------------------------------------------------------")  # another blank line before shoulder
+
+                            self.update_servo_log(" ".join([
+                                f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
+                                for j, a in [
+                                    ("LShldr1", left_shoulder_servo_1),
+                                    ("LShldr2", left_shoulder_servo_2),
+                                    ("LShldr3", left_shoulder_servo_3)
+                                ]
+                            ]))
+
+                            self.update_servo_log(" ".join([
+                                f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
+                                for j, a in [
+                                    ("LElbw1", left_elbow_servo_1),
+                                    ("LElbw2", left_elbow_servo_2)
+                                ]
+                            ]))
+
+                            self.update_servo_log(" ".join([
+                                f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
+                                for j, a in [
+                                    ("LThumb", left_hand_servo_thumb_angle),
+                                    ("LIndex", left_hand_servo_index_angle),
+                                    ("LMiddle", left_hand_servo_middle_angle),
+                                    ("LRing", left_hand_servo_ring_angle),
+                                    ("LPinky", left_hand_servo_pinky_angle)
+                                ]
+                            ]))
+
+                            self.update_servo_log("---------------------------------------------------------------------------------------------")  # blank line before shoulder
+                           
 
                             last_print_time = current_time
                     
@@ -325,9 +339,14 @@ class ContentSwitcher:
             visualisation_container.pack(expand=True, fill="both")
             
             # Initialize the 3D plot 
-            self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(visualisation_container)
-            self.canvas_widget.pack(in_=visualisation_container, side="top", expand=True, fill="both")
-          
+            plot_frame = ttk.Frame(visualisation_container, height=300)  # Set desired height here
+            plot_frame.pack(side="top", fill="x", pady=(5, 0))
+            plot_frame.pack_propagate(False)  # Prevent resizing to fit children
+
+            # Initialize the 3D plot inside this fixed-size frame
+            self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(plot_frame)
+            self.canvas_widget.pack(fill="both", expand=True)
+            
             # Add the servo log text widget underneath the plot
             self.servo_log_widget = tk.Text(visualisation_container, height=10, state="disabled", wrap="none")
             self.servo_log_widget.pack(side="bottom", fill="x")
@@ -341,8 +360,7 @@ class ContentSwitcher:
                 args=(self.ax, self.scatter_dict, self.canvas_obj),
                 daemon=True
             ).start()
- 
-                      
+          
     
     def _create_sequence_unavailable_placeholder(self):
         self._create_placeholder("sequence recording unavailable", "red", "dependencies not initialised")
