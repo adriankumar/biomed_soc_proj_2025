@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, filedialog
 import json
 import time
 import threading
+import copy
 from core.validation import (
     MAX_SEQUENCE_DURATION, MIN_KEYFRAME_INTERVAL, MAX_KEYFRAME_DELAY, 
     DEFAULT_KEYFRAME_DELAY, PLAYBACK_COMMAND_INTERVAL, PLAYBACK_TIMING_PRECISION,
@@ -10,12 +11,12 @@ from core.validation import (
 )
 from core.event_system import publish, Events
 from gui.motion_editor import MotionEditor
-from core.sequence_translation import SequenceTranslator
 
 class SequenceManager:
-    #manages sequence data and operations
+    #manages sequence data with original time-based recording and motion-centric conversion
     def __init__(self, state_manager):
         self.state = state_manager
+        #restore original working structure for recording
         self.sequence_data = {
             "metadata": {
                 "max_duration": MAX_SEQUENCE_DURATION,
@@ -23,10 +24,9 @@ class SequenceManager:
                 "creation_timestamp": None,
                 "component_count": 0
             },
-            "keyframes": []
+            "keyframes": []  #original time-based structure that works for recording
         }
-        self.dirty_timing_from_index = None
-        self.gui_callbacks = []  #direct callbacks for reliability
+        self.gui_callbacks = []
     
     #add gui callback for updates
     def add_gui_callback(self, callback):
@@ -38,26 +38,23 @@ class SequenceManager:
         if callback in self.gui_callbacks:
             self.gui_callbacks.remove(callback)
     
-    #notify gui callbacks directly
+    #notify gui callbacks and event system
     def _notify_gui(self, event_type, *args):
-        #use direct callbacks for reliability
-        for callback in self.gui_callbacks[:]:  #copy list to avoid modification during iteration
+        for callback in self.gui_callbacks[:]:
             try:
                 callback(event_type, *args)
             except Exception:
-                #remove failed callbacks
                 if callback in self.gui_callbacks:
                     self.gui_callbacks.remove(callback)
         
-        #also publish to event system for other subscribers
         publish(event_type, *args)
     
-    #record keyframe with current component positions
+    #restored original working record keyframe method
     def record_keyframe(self, delay_to_next):
         component_positions = self.state.get_current_component_positions()
         absolute_time = self._calculate_next_absolute_time()
         
-        #validate timing
+        #validate timing using original logic
         timing_result = validate_timing(absolute_time, delay_to_next)
         if not timing_result.is_valid:
             return False, timing_result.error_message
@@ -67,7 +64,7 @@ class SequenceManager:
         if not positions_result.is_valid:
             return False, positions_result.error_message
         
-        #create keyframe
+        #create keyframe using original working structure
         keyframe = {
             "absolute_time": round(absolute_time, 3),
             "component_positions": component_positions.copy(),
@@ -84,6 +81,106 @@ class SequenceManager:
         self._notify_gui(Events.SEQUENCE_KEYFRAME_ADDED, len(self.sequence_data["keyframes"]) - 1)
         return True, "keyframe recorded successfully"
     
+    #restored original working time calculation method
+    def _calculate_next_absolute_time(self):
+        if not self.sequence_data["keyframes"]:
+            return 0.0
+        
+        last_keyframe = self.sequence_data["keyframes"][-1]
+        return last_keyframe["absolute_time"] + last_keyframe["delay_to_next"]
+    
+    #convert from time-based recording format to motion-centric format for motion editor
+    def _convert_to_motion_centric(self):
+        motion_sequences = {}
+        
+        for keyframe in self.sequence_data["keyframes"]:
+            time_ms = round(keyframe["absolute_time"] * 1000)
+            
+            for component_name, pulse_width in keyframe["component_positions"].items():
+                if component_name not in motion_sequences:
+                    motion_sequences[component_name] = []
+                
+                #create motion editor compatible keyframe
+                motion_keyframe = {
+                    "time": time_ms,
+                    "angle": pulse_width,
+                    "cp_in": None,
+                    "cp_out": None
+                }
+                
+                motion_sequences[component_name].append(motion_keyframe)
+        
+        #ensure control points for all sequences
+        for component_name in motion_sequences:
+            self._ensure_motion_control_points(motion_sequences[component_name])
+        
+        return motion_sequences
+    
+    #ensure control points for motion editor sequences
+    def _ensure_motion_control_points(self, keyframes):
+        num_kf = len(keyframes)
+        
+        for i, kf in enumerate(keyframes):
+            default_tension = 0.33
+            
+            #incoming control point
+            if i > 0:
+                if 'cp_in' not in kf or kf['cp_in'] is None:
+                    prev_kf = keyframes[i-1]
+                    time_diff = kf['time'] - prev_kf['time']
+                    dt = max(1, time_diff) * -default_tension
+                    kf['cp_in'] = {'dt': dt, 'da': 0.0}
+            else:
+                kf['cp_in'] = None
+            
+            #outgoing control point
+            if i < num_kf - 1:
+                if 'cp_out' not in kf or kf['cp_out'] is None:
+                    next_kf = keyframes[i+1]
+                    time_diff = next_kf['time'] - kf['time']
+                    dt = max(1, time_diff) * default_tension
+                    kf['cp_out'] = {'dt': dt, 'da': 0.0}
+            else:
+                kf['cp_out'] = None
+    
+    #convert from motion-centric format back to time-based format
+    def _convert_from_motion_centric(self, motion_sequences):
+        if not motion_sequences:
+            return
+        
+        #collect all unique times
+        all_times = set()
+        for keyframes in motion_sequences.values():
+            for kf in keyframes:
+                all_times.add(kf['time'])
+        
+        sorted_times = sorted(list(all_times))
+        new_keyframes = []
+        
+        #create time-based keyframes
+        for i, time_ms in enumerate(sorted_times):
+            delay_to_next = (sorted_times[i+1] - time_ms) / 1000.0 if i < len(sorted_times) - 1 else 1.0
+            
+            keyframe = {
+                "absolute_time": time_ms / 1000.0,
+                "delay_to_next": delay_to_next,
+                "component_positions": {}
+            }
+            
+            #collect component positions at this time
+            for component_name, keyframes in motion_sequences.items():
+                for kf in keyframes:
+                    if kf['time'] == time_ms:
+                        keyframe["component_positions"][component_name] = kf['angle']
+                        break
+            
+            new_keyframes.append(keyframe)
+        
+        #replace sequence data
+        self.sequence_data["keyframes"] = new_keyframes
+        self.sequence_data["metadata"]["total_keyframes"] = len(new_keyframes)
+        self.sequence_data["metadata"]["component_count"] = len(new_keyframes[0]["component_positions"]) if new_keyframes else 0
+    
     #remove keyframe with optimised recalculation
     def remove_keyframe(self, index):
         if index < 0 or index >= len(self.sequence_data["keyframes"]):
@@ -94,53 +191,41 @@ class SequenceManager:
         
         self.sequence_data["keyframes"].pop(index)
         
-        #mark timing dirty from removal point
-        self.dirty_timing_from_index = index
-        self._recalculate_timing_from_dirty()
+        #recalculate timing from removal point
+        self._recalculate_timing_from_index(index)
         
         self.sequence_data["metadata"]["total_keyframes"] = len(self.sequence_data["keyframes"])
         
         self._notify_gui(Events.SEQUENCE_KEYFRAME_REMOVED, index)
         return True, "keyframe removed successfully"
     
-    #update keyframe delay with optimised recalculation
+    #update keyframe delay with timing recalculation
     def update_keyframe_delay(self, index, new_delay):
         if index < 0 or index >= len(self.sequence_data["keyframes"]):
             return False, "invalid keyframe index"
         
-        old_keyframe = self.sequence_data["keyframes"][index].copy()
-        
-        #update delay
+        old_delay = self.sequence_data["keyframes"][index]["delay_to_next"]
         self.sequence_data["keyframes"][index]["delay_to_next"] = round(new_delay, 3)
         
-        #mark timing dirty from this point
-        self.dirty_timing_from_index = index + 1
-        self._recalculate_timing_from_dirty()
+        #recalculate timing from next keyframe
+        self._recalculate_timing_from_index(index + 1)
         
         #validate total duration
         total_duration = self.get_total_duration()
         if total_duration > MAX_SEQUENCE_DURATION:
             #revert change
-            self.sequence_data["keyframes"][index] = old_keyframe
-            self.dirty_timing_from_index = index + 1
-            self._recalculate_timing_from_dirty()
+            self.sequence_data["keyframes"][index]["delay_to_next"] = old_delay
+            self._recalculate_timing_from_index(index + 1)
             return False, f"delay would exceed maximum duration of {MAX_SEQUENCE_DURATION} seconds"
         
         self._notify_gui(Events.SEQUENCE_UPDATED)
         return True, "keyframe delay updated successfully"
     
-    #optimised timing recalculation
-    def _recalculate_timing_from_dirty(self):
-        if self.dirty_timing_from_index is None:
-            return
-        
+    #recalculate timing from specified index forward
+    def _recalculate_timing_from_index(self, start_index):
         keyframes = self.sequence_data["keyframes"]
-        if not keyframes or self.dirty_timing_from_index >= len(keyframes):
-            self.dirty_timing_from_index = None
-            return
         
-        #recalculate from dirty index forward
-        for i in range(self.dirty_timing_from_index, len(keyframes)):
+        for i in range(start_index, len(keyframes)):
             if i == 0:
                 keyframes[i]["absolute_time"] = 0.0
             else:
@@ -148,16 +233,6 @@ class SequenceManager:
                 keyframes[i]["absolute_time"] = round(
                     prev_keyframe["absolute_time"] + prev_keyframe["delay_to_next"], 3
                 )
-        
-        self.dirty_timing_from_index = None
-    
-    #calculate next keyframe absolute time
-    def _calculate_next_absolute_time(self):
-        if not self.sequence_data["keyframes"]:
-            return 0.0
-        
-        last_keyframe = self.sequence_data["keyframes"][-1]
-        return last_keyframe["absolute_time"] + last_keyframe["delay_to_next"]
     
     #clear entire sequence
     def clear_sequence(self):
@@ -165,17 +240,31 @@ class SequenceManager:
         self.sequence_data["metadata"]["total_keyframes"] = 0
         self.sequence_data["metadata"]["creation_timestamp"] = None
         self.sequence_data["metadata"]["component_count"] = 0
-        self.dirty_timing_from_index = None
         
         self._notify_gui(Events.SEQUENCE_CLEARED)
         return True, "sequence cleared successfully"
     
-    #replace entire sequence with new keyframes data (for motion editor integration)
+    #get motion-centric sequence data for motion editor
+    def get_sequence_data(self):
+        return self._convert_to_motion_centric()
+    
+    #update sequence data from motion editor
+    def update_sequence_data(self, updated_motion_sequences):
+        if not isinstance(updated_motion_sequences, dict):
+            return False, "invalid sequence data format"
+        
+        try:
+            self._convert_from_motion_centric(updated_motion_sequences)
+            self._notify_gui(Events.SEQUENCE_UPDATED)
+            return True, "sequence updated successfully"
+        except Exception as e:
+            return False, f"failed to update sequence: {str(e)}"
+    
+    #replace entire sequence data for loading
     def replace_sequence_data(self, new_keyframes):
         if not isinstance(new_keyframes, list):
             return False, "invalid keyframes data format"
         
-        #backup current data for rollback
         backup_keyframes = self.sequence_data["keyframes"].copy()
         backup_metadata = self.sequence_data["metadata"].copy()
         
@@ -194,8 +283,7 @@ class SequenceManager:
             self.sequence_data["metadata"]["component_count"] = len(new_keyframes[0]["component_positions"]) if new_keyframes else 0
             
             #recalculate timing consistency
-            self.dirty_timing_from_index = 0
-            self._recalculate_timing_from_dirty()
+            self._recalculate_timing_from_index(0)
             
             self._notify_gui(Events.SEQUENCE_LOADED)
             return True, "sequence data updated successfully"
@@ -206,7 +294,7 @@ class SequenceManager:
             self.sequence_data["metadata"] = backup_metadata
             return False, f"failed to update sequence data: {str(e)}"
     
-    #get sequence data
+    #get sequence data - original format for display compatibility
     def get_keyframes(self):
         return self.sequence_data["keyframes"].copy()
     
@@ -266,7 +354,7 @@ class SequenceManager:
         
         return issues
     
-    #save sequence to file
+    #save sequence in motion-centric format for curve preservation
     def save_sequence(self, file_path=None):
         if not self.has_keyframes():
             return False, "no sequence to save"
@@ -282,22 +370,30 @@ class SequenceManager:
             return False, "no file selected"
         
         try:
-            #ensure timing consistency
-            self._recalculate_timing_from_dirty()
+            #convert to motion-centric format for saving to preserve curves
+            motion_sequences = self._convert_to_motion_centric()
             
             save_data = {
-                "metadata": self.sequence_data["metadata"].copy(),
-                "keyframes": self.sequence_data["keyframes"].copy(),
-                "servo_configurations": {}
+                "metadata": {
+                    "version": "3.0",
+                    "creation_timestamp": self.sequence_data["metadata"]["creation_timestamp"],
+                    "total_duration": self.get_total_duration()
+                },
+                "servo_sequences": motion_sequences,
+                "servo_configs": {}
             }
             
             #include servo configurations for reference
-            for component_name, config in self.state.servo_configurations.items():
-                save_data["servo_configurations"][component_name] = {
-                    "index": config["index"],
-                    "pulse_min": config["pulse_min"],
-                    "pulse_max": config["pulse_max"]
-                }
+            components_used = self.get_sequence_components()
+            for component_name in components_used:
+                if component_name in self.state.servo_configurations:
+                    config = self.state.servo_configurations[component_name]
+                    save_data["servo_configs"][component_name] = {
+                        "index": config["index"],
+                        "pulse_min": config["pulse_min"],
+                        "pulse_max": config["pulse_max"],
+                        "name": component_name
+                    }
             
             with open(file_path, 'w') as file:
                 json.dump(save_data, file, indent=2)
@@ -307,7 +403,7 @@ class SequenceManager:
         except Exception as e:
             return False, f"error saving sequence: {str(e)}"
     
-    #load sequence from file
+    #load sequence from motion-centric or legacy format
     def load_sequence(self, file_path=None):
         if file_path is None:
             file_path = filedialog.askopenfilename(
@@ -322,21 +418,21 @@ class SequenceManager:
             with open(file_path, 'r') as file:
                 loaded_data = json.load(file)
             
-            if "keyframes" not in loaded_data or "metadata" not in loaded_data:
+            #handle both motion-centric and legacy formats
+            if "servo_sequences" in loaded_data:
+                #motion-centric format - convert to time-based for recording
+                self._convert_from_motion_centric(loaded_data["servo_sequences"])
+                if "metadata" in loaded_data:
+                    self.sequence_data["metadata"].update(loaded_data["metadata"])
+            elif "keyframes" in loaded_data and "metadata" in loaded_data:
+                #legacy format - use directly
+                self.sequence_data["keyframes"] = loaded_data["keyframes"]
+                self.sequence_data["metadata"].update(loaded_data["metadata"])
+            else:
                 return False, "invalid sequence file format"
             
-            #validate keyframes
-            for i, keyframe in enumerate(loaded_data["keyframes"]):
-                required_keys = ["absolute_time", "component_positions", "delay_to_next"]
-                if not all(key in keyframe for key in required_keys):
-                    return False, f"invalid keyframe {i} format"
-            
-            self.sequence_data["keyframes"] = loaded_data["keyframes"]
-            self.sequence_data["metadata"].update(loaded_data["metadata"])
-            
             #recalculate timing to ensure consistency
-            self.dirty_timing_from_index = 0
-            self._recalculate_timing_from_dirty()
+            self._recalculate_timing_from_index(0)
             
             self._notify_gui(Events.SEQUENCE_LOADED)
             return True, f"sequence loaded from {file_path}"
@@ -346,7 +442,7 @@ class SequenceManager:
 
 
 class PlaybackManager:
-    #manages sequence playback with simplified threading
+    #manages sequence playback using precise python timing and sp commands
     def __init__(self, sequence_manager, serial_connection, log_callback, gui_callback):
         self.sequence_manager = sequence_manager
         self.serial_connection = serial_connection
@@ -488,7 +584,7 @@ class PlaybackManager:
 
 
 class TimelineVisualiser:
-    #timeline visualisation for sequence
+    #timeline visualisation for sequence display
     def __init__(self, parent, max_duration=120.0, height=40):
         self.frame = ttk.Frame(parent)
         self.max_duration = max_duration
@@ -505,13 +601,7 @@ class TimelineVisualiser:
     
     #create timeline canvas
     def _create_timeline(self):
-        self.canvas = tk.Canvas(
-            self.frame,
-            height=self.height,
-            bg="white",
-            relief="sunken",
-            bd=1
-        )
+        self.canvas = tk.Canvas(self.frame, height=self.height, bg="white", relief="sunken", bd=1)
         self.canvas.pack(fill="x", padx=5, pady=2)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         self._draw_timeline()
@@ -548,27 +638,18 @@ class TimelineVisualiser:
     
     #draw timeline background
     def _draw_background(self, width, height):
-        #background
         self.canvas.create_rectangle(0, 0, width, height, fill="#f8f8f8", outline="#cccccc")
         
-        #main track
         track_y = height // 2
         track_height = 6
-        self.canvas.create_rectangle(
-            10, track_y - track_height//2, width - 10, track_y + track_height//2,
-            fill="#e0e0e0", outline="#cccccc"
-        )
+        self.canvas.create_rectangle(10, track_y - track_height//2, width - 10, track_y + track_height//2, fill="#e0e0e0", outline="#cccccc")
         
-        #duration indicator
         if self.max_duration > 0:
             duration_ratio = min(1.0, self.total_duration / self.max_duration)
             duration_width = int((width - 20) * duration_ratio)
             
             if duration_width > 0:
-                self.canvas.create_rectangle(
-                    10, track_y - track_height//2, 10 + duration_width, track_y + track_height//2,
-                    fill="#4CAF50", outline=""
-                )
+                self.canvas.create_rectangle(10, track_y - track_height//2, 10 + duration_width, track_y + track_height//2, fill="#4CAF50", outline="")
     
     #draw time markers
     def _draw_time_markers(self, width, height):
@@ -581,14 +662,11 @@ class TimelineVisualiser:
         while current_time <= self.max_duration:
             x_pos = 10 + int((current_time / self.max_duration) * (width - 20))
             
-            #marker line
             self.canvas.create_line(x_pos, height - 15, x_pos, height - 5, fill="#666666", width=1)
             
-            #time label
             if current_time == 0 or current_time % (marker_interval * 2) == 0:
                 time_text = f"{current_time:.0f}s"
-                self.canvas.create_text(x_pos, height - 18, text=time_text, font=("Arial", 8), 
-                                      fill="#666666", anchor="s")
+                self.canvas.create_text(x_pos, height - 18, text=time_text, font=("Arial", 8), fill="#666666", anchor="s")
             
             current_time += marker_interval
     
@@ -600,9 +678,8 @@ class TimelineVisualiser:
         track_y = height // 2
         keyframe_height = 12
         timeline_width = width - 20
-        min_keyframe_width = 4
         
-        colours = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#F44336", "#607D8B", "#795548", "#009688"]
+        colours = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#F44336", "#607D8B"]
         
         for i, keyframe in enumerate(self.keyframes):
             start_time = keyframe["absolute_time"]
@@ -612,24 +689,17 @@ class TimelineVisualiser:
             duration_ratio = duration / self.max_duration
             
             start_x = 10 + int(start_ratio * timeline_width)
-            duration_width = max(min_keyframe_width, int(duration_ratio * timeline_width))
+            duration_width = max(4, int(duration_ratio * timeline_width))
             end_x = min(width - 10, start_x + duration_width)
             
             if end_x > start_x:
                 keyframe_colour = colours[i % len(colours)]
                 
-                #keyframe block
-                self.canvas.create_rectangle(
-                    start_x, track_y - keyframe_height//2, 
-                    end_x, track_y + keyframe_height//2,
-                    fill=keyframe_colour, outline="#333333", width=1
-                )
+                self.canvas.create_rectangle(start_x, track_y - keyframe_height//2, end_x, track_y + keyframe_height//2, fill=keyframe_colour, outline="#333333", width=1)
                 
-                #keyframe number
                 if (end_x - start_x) >= 15:
                     label_x = start_x + (end_x - start_x) // 2
-                    self.canvas.create_text(label_x, track_y, text=str(i + 1), font=("Arial", 8, "bold"), 
-                                          fill="white", anchor="center")
+                    self.canvas.create_text(label_x, track_y, text=str(i + 1), font=("Arial", 8, "bold"), fill="white", anchor="center")
     
     #start playback animation
     def start_playback_animation(self, duration):
@@ -640,10 +710,7 @@ class TimelineVisualiser:
         self.animation_start_time = time.time()
         self.animation_duration = duration
         
-        self.playback_line_id = self.canvas.create_line(
-            0, 0, 0, self.canvas.winfo_height(),
-            fill="#FF5722", width=2
-        )
+        self.playback_line_id = self.canvas.create_line(0, 0, 0, self.canvas.winfo_height(), fill="#FF5722", width=2)
         
         self._animate_playback()
     
@@ -690,7 +757,7 @@ class TimelineVisualiser:
 
 
 class SequenceRecorderWidget:
-    #combined sequence recording interface with timeline and motion editor integration
+    #sequence recording interface with integrated motion editor
     def __init__(self, parent, sequence_manager, serial_connection, log_callback):
         self.frame = ttk.LabelFrame(parent, text="sequence recording")
         self.sequence_manager = sequence_manager
@@ -709,13 +776,12 @@ class SequenceRecorderWidget:
             gui_callback=self._on_playback_event
         )
         
-        #motion editor integration
+        #motion editor window reference
         self.motion_editor_window = None
-        self.sequence_translator = SequenceTranslator(sequence_manager.state, log_callback)
         
         self._create_ui()
         
-        #register direct callback for reliable updates
+        #register gui callback for updates
         self.sequence_manager.add_gui_callback(self._on_sequence_event)
     
     #create recording interface
@@ -729,15 +795,7 @@ class SequenceRecorderWidget:
         
         ttk.Label(delay_frame, text="delay to next step (seconds):").pack(side="left", padx=5)
         
-        self.delay_spinbox = ttk.Spinbox(
-            delay_frame,
-            from_=MIN_KEYFRAME_INTERVAL,
-            to=MAX_KEYFRAME_DELAY,
-            increment=0.1,
-            textvariable=self.delay_var,
-            width=8,
-            format="%.1f"
-        )
+        self.delay_spinbox = ttk.Spinbox(delay_frame, from_=MIN_KEYFRAME_INTERVAL, to=MAX_KEYFRAME_DELAY, increment=0.1, textvariable=self.delay_var, width=8, format="%.1f")
         self.delay_spinbox.pack(side="left", padx=5)
         
         #control buttons
@@ -766,13 +824,8 @@ class SequenceRecorderWidget:
         self.load_button = ttk.Button(file_frame, text="load sequence", command=self._load_sequence)
         self.load_button.pack(side="left", padx=5)
         
-        #motion editor button
-        self.motion_editor_button = ttk.Button(
-            file_frame, 
-            text="edit motion curves", 
-            command=self._launch_motion_editor,
-            state="disabled"
-        )
+        #motion editor integration
+        self.motion_editor_button = ttk.Button(file_frame, text="edit motion curves", command=self._launch_motion_editor, state="disabled")
         self.motion_editor_button.pack(side="left", padx=5)
         
         #timeline visualiser
@@ -838,15 +891,30 @@ class SequenceRecorderWidget:
                 pass
             self.motion_editor_window = None
         
-        #create new motion editor instance
+        #get motion-centric sequence data for motion editor
+        sequence_data = self.sequence_manager.get_sequence_data()
+        
+        #create motion editor instance
         self.motion_editor_window = MotionEditor(
             parent=self.frame,
-            sequence_manager=self.sequence_manager,
+            sequence_data=sequence_data,
             state_manager=self.sequence_manager.state,
             serial_connection=self.serial_connection,
             log_callback=self.log_callback
         )
         
+        #setup callback to receive updates from motion editor
+        original_save_method = self.motion_editor_window._save_changes
+        def save_with_callback():
+            original_save_method()
+            updated_data = self.motion_editor_window.get_sequence_data()
+            success, message = self.sequence_manager.update_sequence_data(updated_data)
+            if success:
+                self.log_callback("motion editor changes applied to sequence")
+            else:
+                self.log_callback(f"failed to apply motion editor changes: {message}")
+        
+        self.motion_editor_window._save_changes = save_with_callback
         self.motion_editor_window.show()
         
         if self.log_callback:
@@ -956,8 +1024,7 @@ class SequenceRecorderWidget:
         ttk.Label(frame, text="new delay (seconds):").pack(pady=5)
         
         delay_var = tk.DoubleVar(value=keyframe["delay_to_next"])
-        delay_spinbox = ttk.Spinbox(frame, from_=MIN_KEYFRAME_INTERVAL, to=MAX_KEYFRAME_DELAY,
-                                   increment=0.1, textvariable=delay_var, width=10, format="%.1f")
+        delay_spinbox = ttk.Spinbox(frame, from_=MIN_KEYFRAME_INTERVAL, to=MAX_KEYFRAME_DELAY, increment=0.1, textvariable=delay_var, width=10, format="%.1f")
         delay_spinbox.pack(pady=5)
         
         button_frame = ttk.Frame(frame)
@@ -994,7 +1061,7 @@ class SequenceRecorderWidget:
             success_count = self.serial_connection.send_batch_commands(commands)
             self.log_callback(f"previewed step {self.selected_step_index + 1}: sent {success_count}/{len(commands)} commands")
     
-    #handle sequence events with forced refresh
+    #handle sequence events
     def _on_sequence_event(self, event_type, *args):
         self._update_all_displays()
     
@@ -1012,7 +1079,7 @@ class SequenceRecorderWidget:
             error_msg = args[0] if args else "unknown error"
             messagebox.showerror("playback error", error_msg)
     
-    #force update of all displays
+    #update all displays
     def _update_all_displays(self):
         self._update_sequence_display()
         self._update_timeline()
@@ -1020,7 +1087,6 @@ class SequenceRecorderWidget:
     
     #update sequence display
     def _update_sequence_display(self):
-        #clear existing items
         for item in self.step_tree.get_children():
             self.step_tree.delete(item)
         
@@ -1043,13 +1109,13 @@ class SequenceRecorderWidget:
                 component_summary
             ))
     
-    #update timeline
+    #update timeline visualiser
     def _update_timeline(self):
         keyframes = self.sequence_manager.get_keyframes()
         total_duration = self.sequence_manager.get_total_duration()
         self.timeline_visualiser.update_sequence(keyframes, total_duration)
     
-    #update button states including motion editor button
+    #update button states
     def _update_button_states(self):
         has_keyframes = self.sequence_manager.has_keyframes()
         is_playing = self.playback_manager.is_playing()
@@ -1070,15 +1136,12 @@ class SequenceRecorderWidget:
         
         self.delay_spinbox.config(state="normal" if not is_playing else "disabled")
         
-        #motion editor button state
-        self.motion_editor_button.config(
-            state="normal" if has_keyframes and not is_playing and is_connected else "disabled"
-        )
+        #motion editor button
+        self.motion_editor_button.config(state="normal" if has_keyframes and not is_playing else "disabled")
     
     #widget visibility methods
     def show(self):
         self.frame.pack(fill="both", expand=True)
-        #force refresh when shown
         self._update_all_displays()
     
     def hide(self):
@@ -1087,9 +1150,8 @@ class SequenceRecorderWidget:
     def is_visible(self):
         return self.frame.winfo_manager() == "pack"
     
-    #cleanup when widget is destroyed
+    #cleanup
     def cleanup(self):
-        #close motion editor if open
         if self.motion_editor_window:
             try:
                 self.motion_editor_window.window.destroy()
@@ -1097,7 +1159,6 @@ class SequenceRecorderWidget:
                 pass
             self.motion_editor_window = None
         
-        #cleanup sequence manager callback
         if hasattr(self, 'sequence_manager'):
             self.sequence_manager.remove_gui_callback(self._on_sequence_event)
     
