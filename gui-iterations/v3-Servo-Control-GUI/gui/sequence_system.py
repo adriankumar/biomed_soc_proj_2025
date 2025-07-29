@@ -8,7 +8,9 @@ from core.validation import (
     DEFAULT_KEYFRAME_DELAY, PLAYBACK_COMMAND_INTERVAL, PLAYBACK_TIMING_PRECISION,
     validate_timing, validate_component_positions
 )
-from core.event_system import subscribe, publish, Events
+from core.event_system import publish, Events
+from gui.motion_editor import MotionEditor
+from core.sequence_translation import SequenceTranslator
 
 class SequenceManager:
     #manages sequence data and operations
@@ -167,6 +169,42 @@ class SequenceManager:
         
         self._notify_gui(Events.SEQUENCE_CLEARED)
         return True, "sequence cleared successfully"
+    
+    #replace entire sequence with new keyframes data (for motion editor integration)
+    def replace_sequence_data(self, new_keyframes):
+        if not isinstance(new_keyframes, list):
+            return False, "invalid keyframes data format"
+        
+        #backup current data for rollback
+        backup_keyframes = self.sequence_data["keyframes"].copy()
+        backup_metadata = self.sequence_data["metadata"].copy()
+        
+        try:
+            #validate new keyframes structure
+            for keyframe in new_keyframes:
+                if not isinstance(keyframe, dict):
+                    raise ValueError("invalid keyframe structure")
+                required_keys = ["absolute_time", "component_positions", "delay_to_next"]
+                if not all(key in keyframe for key in required_keys):
+                    raise ValueError("missing required keyframe fields")
+            
+            #replace sequence data
+            self.sequence_data["keyframes"] = new_keyframes
+            self.sequence_data["metadata"]["total_keyframes"] = len(new_keyframes)
+            self.sequence_data["metadata"]["component_count"] = len(new_keyframes[0]["component_positions"]) if new_keyframes else 0
+            
+            #recalculate timing consistency
+            self.dirty_timing_from_index = 0
+            self._recalculate_timing_from_dirty()
+            
+            self._notify_gui(Events.SEQUENCE_LOADED)
+            return True, "sequence data updated successfully"
+            
+        except Exception as e:
+            #rollback to backup data on failure
+            self.sequence_data["keyframes"] = backup_keyframes
+            self.sequence_data["metadata"] = backup_metadata
+            return False, f"failed to update sequence data: {str(e)}"
     
     #get sequence data
     def get_keyframes(self):
@@ -652,7 +690,7 @@ class TimelineVisualiser:
 
 
 class SequenceRecorderWidget:
-    #combined sequence recording interface with timeline
+    #combined sequence recording interface with timeline and motion editor integration
     def __init__(self, parent, sequence_manager, serial_connection, log_callback):
         self.frame = ttk.LabelFrame(parent, text="sequence recording")
         self.sequence_manager = sequence_manager
@@ -670,6 +708,10 @@ class SequenceRecorderWidget:
             log_callback=log_callback,
             gui_callback=self._on_playback_event
         )
+        
+        #motion editor integration
+        self.motion_editor_window = None
+        self.sequence_translator = SequenceTranslator(sequence_manager.state, log_callback)
         
         self._create_ui()
         
@@ -714,7 +756,7 @@ class SequenceRecorderWidget:
         self.clear_button = ttk.Button(control_frame, text="clear", command=self._clear_sequence)
         self.clear_button.pack(side="left", padx=5)
         
-        #file operations
+        #file operations and motion editor
         file_frame = ttk.Frame(main_frame)
         file_frame.pack(fill="x", pady=5)
         
@@ -723,6 +765,15 @@ class SequenceRecorderWidget:
         
         self.load_button = ttk.Button(file_frame, text="load sequence", command=self._load_sequence)
         self.load_button.pack(side="left", padx=5)
+        
+        #motion editor button
+        self.motion_editor_button = ttk.Button(
+            file_frame, 
+            text="edit motion curves", 
+            command=self._launch_motion_editor,
+            state="disabled"
+        )
+        self.motion_editor_button.pack(side="left", padx=5)
         
         #timeline visualiser
         timeline_frame = ttk.LabelFrame(main_frame, text="timeline")
@@ -772,6 +823,34 @@ class SequenceRecorderWidget:
         
         #force initial update
         self._update_all_displays()
+    
+    #launch motion editor for curve editing
+    def _launch_motion_editor(self):
+        if not self.sequence_manager.has_keyframes():
+            messagebox.showinfo("no sequence", "no sequence data to edit")
+            return
+        
+        #close existing motion editor if open
+        if self.motion_editor_window:
+            try:
+                self.motion_editor_window.window.destroy()
+            except:
+                pass
+            self.motion_editor_window = None
+        
+        #create new motion editor instance
+        self.motion_editor_window = MotionEditor(
+            parent=self.frame,
+            sequence_manager=self.sequence_manager,
+            state_manager=self.sequence_manager.state,
+            serial_connection=self.serial_connection,
+            log_callback=self.log_callback
+        )
+        
+        self.motion_editor_window.show()
+        
+        if self.log_callback:
+            self.log_callback("launched motion editor for sequence curves")
     
     #record new step
     def _record_step(self):
@@ -970,7 +1049,7 @@ class SequenceRecorderWidget:
         total_duration = self.sequence_manager.get_total_duration()
         self.timeline_visualiser.update_sequence(keyframes, total_duration)
     
-    #update button states
+    #update button states including motion editor button
     def _update_button_states(self):
         has_keyframes = self.sequence_manager.has_keyframes()
         is_playing = self.playback_manager.is_playing()
@@ -990,6 +1069,11 @@ class SequenceRecorderWidget:
         self.preview_button.config(state="normal" if has_selection and not is_playing and is_connected else "disabled")
         
         self.delay_spinbox.config(state="normal" if not is_playing else "disabled")
+        
+        #motion editor button state
+        self.motion_editor_button.config(
+            state="normal" if has_keyframes and not is_playing and is_connected else "disabled"
+        )
     
     #widget visibility methods
     def show(self):
@@ -1004,6 +1088,18 @@ class SequenceRecorderWidget:
         return self.frame.winfo_manager() == "pack"
     
     #cleanup when widget is destroyed
-    def __del__(self):
+    def cleanup(self):
+        #close motion editor if open
+        if self.motion_editor_window:
+            try:
+                self.motion_editor_window.window.destroy()
+            except:
+                pass
+            self.motion_editor_window = None
+        
+        #cleanup sequence manager callback
         if hasattr(self, 'sequence_manager'):
             self.sequence_manager.remove_gui_callback(self._on_sequence_event)
+    
+    def __del__(self):
+        self.cleanup()

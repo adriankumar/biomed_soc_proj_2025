@@ -17,6 +17,13 @@ MIN_KEYFRAME_INTERVAL = 0.01
 MAX_KEYFRAME_DELAY = 30.0
 DEFAULT_KEYFRAME_DELAY = 1.0
 
+#motion curve constraints (for motion editor integration)
+MIN_TENSION_FACTOR = 0.0
+MAX_TENSION_FACTOR = 1.0
+DEFAULT_TENSION_FACTOR = 0.33
+MAX_CONTROL_POINT_TIME_OFFSET = 10000  #maximum milliseconds offset for control points
+MIN_CONTROL_POINT_TIME_OFFSET = 1      #minimum milliseconds offset for control points
+
 #gui performance
 SLIDER_THROTTLE_MS = 50 #controls how fast the slider sends pulse width values; only used for the slider
 PLAYBACK_COMMAND_INTERVAL = 0.005
@@ -130,3 +137,139 @@ def validate_component_name(component_name):
         return ValidationResult(False, component_name, "component name too long (max 50 characters)")
     
     return ValidationResult(True, component_name, "")
+
+#validate motion curve tension factor (for motion editor)
+def validate_tension_factor(tension_value):
+    try:
+        if isinstance(tension_value, str):
+            tension_value = float(tension_value.strip())
+        
+        if not (MIN_TENSION_FACTOR <= tension_value <= MAX_TENSION_FACTOR):
+            return ValidationResult(False, DEFAULT_TENSION_FACTOR, 
+                f"tension factor must be between {MIN_TENSION_FACTOR} and {MAX_TENSION_FACTOR}")
+        
+        return ValidationResult(True, tension_value, "")
+    except (ValueError, TypeError):
+        return ValidationResult(False, DEFAULT_TENSION_FACTOR, "tension factor must be a valid number")
+
+#validate control point time offset (for motion editor)
+def validate_control_point_offset(time_offset, control_type="out"):
+    try:
+        if isinstance(time_offset, str):
+            time_offset = float(time_offset.strip())
+        
+        if abs(time_offset) > MAX_CONTROL_POINT_TIME_OFFSET:
+            return ValidationResult(False, 0, f"control point offset too large (max {MAX_CONTROL_POINT_TIME_OFFSET}ms)")
+        
+        if abs(time_offset) < MIN_CONTROL_POINT_TIME_OFFSET:
+            return ValidationResult(False, 0, f"control point offset too small (min {MIN_CONTROL_POINT_TIME_OFFSET}ms)")
+        
+        #validate direction constraints
+        if control_type == "out" and time_offset < 0:
+            return ValidationResult(False, abs(time_offset), "outgoing control points must have positive time offset")
+        elif control_type == "in" and time_offset > 0:
+            return ValidationResult(False, -abs(time_offset), "incoming control points must have negative time offset")
+        
+        return ValidationResult(True, time_offset, "")
+    except (ValueError, TypeError):
+        return ValidationResult(False, 0, "control point offset must be a valid number")
+
+#validate bezier curve keyframe structure (for motion editor integration)
+def validate_bezier_keyframe(keyframe_data):
+    if not isinstance(keyframe_data, dict):
+        return ValidationResult(False, None, "keyframe must be a dictionary")
+    
+    required_fields = ["time", "angle"]
+    for field in required_fields:
+        if field not in keyframe_data:
+            return ValidationResult(False, None, f"keyframe missing required field: {field}")
+    
+    #validate time value
+    try:
+        time_value = float(keyframe_data["time"])
+        if time_value < 0 or time_value > MAX_SEQUENCE_DURATION * 1000:  #convert to milliseconds
+            return ValidationResult(False, None, f"keyframe time {time_value} outside valid range")
+    except (ValueError, TypeError):
+        return ValidationResult(False, None, "keyframe time must be a valid number")
+    
+    #validate angle/pwm value
+    try:
+        angle_value = float(keyframe_data["angle"])
+        if not (MIN_PULSE_WIDTH <= angle_value <= MAX_PULSE_WIDTH):
+            return ValidationResult(False, None, f"keyframe angle {angle_value} outside pulse width range")
+    except (ValueError, TypeError):
+        return ValidationResult(False, None, "keyframe angle must be a valid number")
+    
+    #validate control points if present
+    for cp_type in ["cp_in", "cp_out"]:
+        if cp_type in keyframe_data and keyframe_data[cp_type] is not None:
+            cp_data = keyframe_data[cp_type]
+            if not isinstance(cp_data, dict) or "dt" not in cp_data or "da" not in cp_data:
+                return ValidationResult(False, None, f"invalid {cp_type} control point structure")
+            
+            #validate time offset
+            offset_result = validate_control_point_offset(cp_data["dt"], cp_type.split("_")[1])
+            if not offset_result.is_valid:
+                return ValidationResult(False, None, f"{cp_type} {offset_result.error_message}")
+    
+    return ValidationResult(True, keyframe_data, "")
+
+#validate entire bezier sequence structure (for motion editor integration)
+def validate_bezier_sequence(sequence_data):
+    if not isinstance(sequence_data, list):
+        return ValidationResult(False, None, "sequence must be a list of keyframes")
+    
+    if len(sequence_data) < 2:
+        return ValidationResult(False, None, "sequence must contain at least 2 keyframes")
+    
+    validation_errors = []
+    previous_time = -1
+    
+    for i, keyframe in enumerate(sequence_data):
+        #validate individual keyframe
+        keyframe_result = validate_bezier_keyframe(keyframe)
+        if not keyframe_result.is_valid:
+            validation_errors.append(f"keyframe {i}: {keyframe_result.error_message}")
+            continue
+        
+        #validate time ordering
+        current_time = keyframe["time"]
+        if current_time <= previous_time:
+            validation_errors.append(f"keyframe {i}: time {current_time} not after previous time {previous_time}")
+        
+        previous_time = current_time
+    
+    if validation_errors:
+        return ValidationResult(False, None, "; ".join(validation_errors))
+    
+    return ValidationResult(True, sequence_data, "")
+
+#validate interpolation data structure (for sequence files with curve data)
+def validate_interpolation_data(interpolation_data, component_name=""):
+    if not isinstance(interpolation_data, dict):
+        return ValidationResult(False, None, "interpolation data must be a dictionary")
+    
+    component_prefix = f"{component_name}: " if component_name else ""
+    
+    #validate interpolation type
+    if "type" not in interpolation_data:
+        return ValidationResult(False, None, f"{component_prefix}interpolation type not specified")
+    
+    if interpolation_data["type"] not in ["linear", "bezier"]:
+        return ValidationResult(False, None, f"{component_prefix}invalid interpolation type: {interpolation_data['type']}")
+    
+    #validate bezier-specific data
+    if interpolation_data["type"] == "bezier":
+        for cp_type in ["cp_in", "cp_out"]:
+            if cp_type in interpolation_data:
+                cp_data = interpolation_data[cp_type]
+                if cp_data is not None:
+                    if not isinstance(cp_data, dict) or "dt" not in cp_data or "da" not in cp_data:
+                        return ValidationResult(False, None, f"{component_prefix}invalid {cp_type} structure")
+                    
+                    #validate control point offset
+                    offset_result = validate_control_point_offset(cp_data["dt"], cp_type.split("_")[1])
+                    if not offset_result.is_valid:
+                        return ValidationResult(False, None, f"{component_prefix}{cp_type} {offset_result.error_message}")
+    
+    return ValidationResult(True, interpolation_data, "")
