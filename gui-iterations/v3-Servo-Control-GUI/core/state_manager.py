@@ -162,12 +162,14 @@ class ServoState:
         
         return True
     
-    #update servo position with validation and events
+    #update servo position immediately regardless of serial connection status
     def update_servo_position(self, component_name, pulse_width):
         if component_name not in self.servo_configurations:
             return False
         
         config = self.servo_configurations[component_name]
+        
+        #validate pulse width against component constraints
         range_result = validate_pulse_within_range(
             pulse_width, config["pulse_min"], config["pulse_max"], component_name
         )
@@ -175,9 +177,10 @@ class ServoState:
         if not range_result.is_valid:
             return False
         
+        #always update current position in state (decoupled from serial communication)
         config["current_position"] = pulse_width
         
-        #publish event immediately
+        #publish position change event immediately for all listeners
         publish(Events.COMPONENT_POSITION_CHANGED, component_name, pulse_width, component_name=component_name)
         
         return True
@@ -240,7 +243,7 @@ class ServoState:
                 return component_name, config
         return None, None
     
-    #get current positions using component groups order
+    #get current positions using component groups order for reliable state tracking
     def get_current_component_positions(self):
         positions = {}
         for group_name, components in self.component_groups.items():

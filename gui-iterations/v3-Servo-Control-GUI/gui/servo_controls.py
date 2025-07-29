@@ -139,7 +139,7 @@ class ServoControlWidget:
     def _on_slider_changed(self, value):
         current_time = time.time()
         if (current_time - self.last_command_time) * 1000 > SLIDER_THROTTLE_MS:
-            pulse_width = int(float(value))
+            pulse_width = int(round(float(value)))
             self.pulse_width_var.set(pulse_width)
             self._send_servo_command(pulse_width)
             self.last_command_time = current_time
@@ -235,11 +235,22 @@ class ServoControlWidget:
         else:
             self.state.update_component_setting(self.component_name, "index", new_index)
     
-    #send servo command to esp
+    #send servo command and update state regardless of serial connection status
     def _send_servo_command(self, pulse_width):
-        servo_index = self.config["index"]
-        if self.send_command and self.send_command(f"SP:{servo_index}:{pulse_width}"):
-            self.state.update_servo_position(self.component_name, pulse_width)
+        #always update state first to maintain gui consistency
+        state_updated = self.state.update_servo_position(self.component_name, pulse_width)
+        
+        if not state_updated:
+            return  #validation failed, don't attempt serial command
+        
+        #attempt serial communication (independent of state update)
+        if self.send_command:
+            servo_index = self.config["index"]
+            command = f"SP:{servo_index}:{pulse_width}"
+            serial_success = self.send_command(command)
+            
+            #serial failure doesn't affect state consistency
+            #gui and state remain synchronised regardless of hardware communication
     
     #reset servo to default position
     def reset_to_default(self):

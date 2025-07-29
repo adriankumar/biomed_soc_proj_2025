@@ -8,7 +8,7 @@ from gui.command_interface import CommandTerminal, ConsoleLogger
 from gui.sequence_system import SequenceRecorderWidget
 from core.event_system import subscribe, Events, cleanup
 
-#Content switcher is the additional tools frame
+#content switcher manages additional tools and content switching including eye display
 class ContentSwitcher:
     #manages additional tools and content switching including eye display
     def __init__(self, parent, state, serial_connection, log_callback):
@@ -93,7 +93,7 @@ class ContentSwitcher:
         else:
             self._create_default_placeholder()
     
-    #create sequence recording content
+    #create sequence recording content using unified bezier system
     def _create_sequence_recording_content(self):
         if not self.sequence_manager or not self.serial_connection:
             self._create_sequence_unavailable_placeholder()
@@ -182,9 +182,9 @@ class ContentSwitcher:
 
 
 class ServoControlGUI:
-    #main application window and controller
+    #main application window and controller with unified bezier sequence system
     def __init__(self, config_data):
-        #initialise state and sequence managers
+        #initialise state and sequence managers with unified bezier format
         self.state = ServoState(config_data)
         self.sequence_manager = SequenceManager(self.state)
         self.state.set_sequence_manager(self.sequence_manager)
@@ -268,11 +268,12 @@ class ServoControlGUI:
         self.console_logger = ConsoleLogger(terminal_section)
         self.console_logger.frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
     
-    #setup sequence recording integration
+    #setup sequence recording integration with simplified unified bezier system
     def _setup_sequence_integration(self):
         if self.content_switcher and self.serial_connection:
+            #direct dependencies setup - no format conversion needed
             self.content_switcher.set_sequence_dependencies(self.sequence_manager)
-            self._log_message("sequence recording system initialised")
+            self._log_message("unified bezier sequence system initialised")
     
     #log startup information
     def _log_startup_info(self):
@@ -282,16 +283,16 @@ class ServoControlGUI:
         self._log_message(f"loaded {config_source} servo configuration")
         
         self._log_message("servo control system ready")
+        self._log_message("unified bezier motion system active")
         self._log_message("command terminal ready - type commands above or click help")
-        # self._log_message("eye display system available with facial tracking")
     
     #handle connection state changes
     def _on_connection_changed(self, event_type, *args, **kwargs):
         connected = args[0]
         if connected:
-            self._log_message("sequence recording and facial tracking now available")
+            self._log_message("bezier sequence recording and motion editing now available")
         else:
-            self._log_message("sequence recording and facial tracking disabled - no serial connection")
+            self._log_message("sequence recording and motion editing disabled - no serial connection")
     
     #log message to console
     def _log_message(self, message):
@@ -303,16 +304,16 @@ class ServoControlGUI:
         if self.command_terminal:
             self.command_terminal.focus_command_entry()
     
-    #handle window close event
+    #handle window close event with unified system cleanup
     def _on_window_close(self):
         self._log_message("shutting down servo control system...")
         
-        #stop sequence playback if active
+        #stop sequence playback if active using unified system
         if self.content_switcher.is_sequence_recording_active():
             sequence_widget = self.content_switcher.get_sequence_recorder_widget()
             if sequence_widget and hasattr(sequence_widget, 'playback_manager'):
                 sequence_widget.playback_manager.stop_playback()
-                self._log_message("stopped sequence playback")
+                self._log_message("stopped bezier sequence playback")
         
         #cleanup eye display and facial tracking if active
         if hasattr(self.content_switcher, 'eye_display_widget') and self.content_switcher.eye_display_widget:

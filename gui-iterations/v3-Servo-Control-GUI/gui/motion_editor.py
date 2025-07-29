@@ -6,15 +6,20 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.lines import Line2D
 import copy
 import time
+from core.bezier_interpolation import (
+    bezier_point, control_point_absolute, compute_curve_segment, 
+    ensure_control_points, generate_playback_points
+)
 
 class MotionEditor:
-    #integrated motion editor for servo sequence curve editing with component awareness
-    def __init__(self, parent, sequence_data, state_manager, serial_connection, log_callback=None):
+    #integrated motion editor for servo sequence curve editing using unified bezier format
+    def __init__(self, parent, sequence_data, state_manager, serial_connection, log_callback=None, save_callback=None):
         self.parent = parent
-        self.sequence_data = sequence_data or {}  #motion-centric format: {component_name: [keyframes]}
+        self.sequence_data = copy.deepcopy(sequence_data) if sequence_data else {}  #unified bezier format
         self.state_manager = state_manager  #for servo configuration data
         self.serial_connection = serial_connection  #for hardware preview
         self.log_callback = log_callback
+        self.save_callback = save_callback  #callback to push changes back to sequence manager
         
         #current editing state
         self.component_names = sorted(list(self.sequence_data.keys()))
@@ -28,9 +33,9 @@ class MotionEditor:
         self.playback_duration = 0
         self.playback_start_time = 0
         
-        #ensure all sequences have proper control points
+        #ensure all sequences have proper control points using shared function
         for component_name in self.component_names:
-            self._ensure_control_points(component_name)
+            ensure_control_points(self.sequence_data[component_name], use_smooth_defaults=True)
         
         self._create_editor_window()
     
@@ -186,37 +191,6 @@ class MotionEditor:
             'pulse_max': config['pulse_max']
         }
     
-    #ensure all keyframes have proper control points using cubic bezier defaults
-    def _ensure_control_points(self, component_name):
-        if component_name not in self.sequence_data:
-            return
-        
-        keyframes = self.sequence_data[component_name]
-        num_kf = len(keyframes)
-        
-        for i, kf in enumerate(keyframes):
-            default_tension = 0.33
-            
-            #incoming control point (not for first keyframe)
-            if i > 0:
-                if 'cp_in' not in kf or kf['cp_in'] is None:
-                    prev_kf = keyframes[i-1]
-                    time_diff = kf['time'] - prev_kf['time']
-                    dt = max(1, time_diff) * -default_tension
-                    kf['cp_in'] = {'dt': dt, 'da': 0.0}
-            else:
-                kf['cp_in'] = None
-            
-            #outgoing control point (not for last keyframe)
-            if i < num_kf - 1:
-                if 'cp_out' not in kf or kf['cp_out'] is None:
-                    next_kf = keyframes[i+1]
-                    time_diff = next_kf['time'] - kf['time']
-                    dt = max(1, time_diff) * default_tension
-                    kf['cp_out'] = {'dt': dt, 'da': 0.0}
-            else:
-                kf['cp_out'] = None
-    
     #setup basic plot configuration
     def _setup_plot(self):
         if not self.current_component:
@@ -236,54 +210,6 @@ class MotionEditor:
         if not self.current_component or self.current_component not in self.sequence_data:
             return []
         return self.sequence_data[self.current_component]
-    
-    #convert relative control point to absolute coordinates
-    def _control_point_absolute(self, keyframe, cp_type):
-        cp_key = f'cp_{cp_type}'
-        if cp_key not in keyframe or keyframe[cp_key] is None:
-            return None
-        
-        cp_data = keyframe[cp_key]
-        abs_time = keyframe['time'] + cp_data['dt']
-        abs_angle = keyframe['angle'] + cp_data['da']
-        
-        config = self._get_servo_config(self.current_component)
-        abs_angle = max(config['pulse_min'], min(config['pulse_max'], abs_angle))
-        
-        return abs_time, abs_angle
-    
-    #compute cubic bezier curve point using bernstein polynomials
-    def _bezier_point(self, t, p0, p1, p2, p3):
-        u = 1 - t
-        tt = t * t
-        uu = u * u
-        uuu = uu * u
-        ttt = tt * t
-        
-        time_val = uuu * p0[0] + 3 * uu * t * p1[0] + 3 * u * tt * p2[0] + ttt * p3[0]
-        angle_val = uuu * p0[1] + 3 * uu * t * p1[1] + 3 * u * tt * p2[1] + ttt * p3[1]
-        
-        return time_val, angle_val
-    
-    #compute bezier curve segment between two keyframes
-    def _compute_curve_segment(self, kf_start, kf_next, resolution=100):
-        start_pos = (kf_start['time'], kf_start['angle'])
-        end_pos = (kf_next['time'], kf_next['angle'])
-        
-        start_cp = self._control_point_absolute(kf_start, 'out')
-        end_cp = self._control_point_absolute(kf_next, 'in')
-        
-        if not start_cp or not end_cp:
-            #linear fallback
-            t_vals = np.linspace(start_pos[0], end_pos[0], resolution)
-            a_vals = np.linspace(start_pos[1], end_pos[1], resolution)
-            return t_vals, a_vals
-        
-        t_params = np.linspace(0, 1, resolution)
-        points = [self._bezier_point(t, start_pos, start_cp, end_cp, end_pos) for t in t_params]
-        
-        times, angles = zip(*points) if points else ([], [])
-        return np.array(times), np.array(angles)
     
     #clear all dynamic plot elements
     def _clear_plot_elements(self):
@@ -306,7 +232,7 @@ class MotionEditor:
                 line.remove()
         self.control_handles.clear()
     
-    #update plot for current component
+    #update plot for current component using shared bezier functions
     def _update_plot(self):
         self._clear_plot_elements()
         self._setup_plot()
@@ -326,7 +252,7 @@ class MotionEditor:
         
         self.keyframe_scatter = self.ax.scatter(kf_times, kf_angles, color="red", s=100, zorder=15, label="keyframes", picker=True)
         
-        #plot curves and control points
+        #plot curves and control points using shared functions
         self._plot_curves_and_controls(keyframes)
         
         #adjust view range
@@ -345,9 +271,13 @@ class MotionEditor:
         
         self.canvas.draw_idle()
     
-    #plot bezier curves and control points
+    #plot bezier curves and control points using shared computation functions
     def _plot_curves_and_controls(self, keyframes):
+        if not keyframes:
+            return
+        
         num_kf = len(keyframes)
+        servo_config = self._get_servo_config(self.current_component)
         curve_plotted = False
         control_plotted = False
         
@@ -355,23 +285,23 @@ class MotionEditor:
             kf = keyframes[i]
             kf_pos = (kf['time'], kf['angle'])
             
-            #plot incoming control point
+            #plot incoming control point using shared function
             if i > 0:
-                cp_in = self._control_point_absolute(kf, 'in')
+                cp_in = control_point_absolute(kf, 'in', servo_config)
                 if cp_in:
                     self._draw_control_point(i, 'in', kf_pos, cp_in, not control_plotted)
                     control_plotted = True
             
-            #plot outgoing control point
+            #plot outgoing control point using shared function
             if i < num_kf - 1:
-                cp_out = self._control_point_absolute(kf, 'out')
+                cp_out = control_point_absolute(kf, 'out', servo_config)
                 if cp_out:
                     self._draw_control_point(i, 'out', kf_pos, cp_out, not control_plotted)
                     control_plotted = True
             
-            #plot curve segment
+            #plot curve segment using shared computation
             if i < num_kf - 1:
-                times, angles = self._compute_curve_segment(kf, keyframes[i + 1])
+                times, angles = compute_curve_segment(kf, keyframes[i + 1], servo_config)
                 curve_label = "bezier curve" if not curve_plotted else None
                 line, = self.ax.plot(times, angles, color='blue', linewidth=2, zorder=10, label=curve_label)
                 self.curve_lines[i] = line
@@ -523,9 +453,6 @@ class MotionEditor:
         if self.serial_connection.send_command(command):
             if self.log_callback:
                 self.log_callback(f"preview: {self.current_component} -> {int(round(angle_value))}")
-        else:
-            if self.log_callback:
-                self.log_callback("preview failed: not connected to serial")
     
     #handle angle entry changes
     def _on_angle_changed(self, event=None):
@@ -585,8 +512,8 @@ class MotionEditor:
             new_kf = {'time': new_time, 'angle': default_angle, 'cp_in': None, 'cp_out': None}
             keyframes.append(new_kf)
         
-        #regenerate control points
-        self._ensure_control_points(self.current_component)
+        #regenerate control points using shared function
+        ensure_control_points(self.sequence_data[self.current_component], use_smooth_defaults=True)
         self._update_plot()
         self._mark_unsaved()
         
@@ -608,85 +535,49 @@ class MotionEditor:
             keyframes.pop(self.selected_kf_index)
             self._clear_selection()
             
-            #regenerate control points
-            self._ensure_control_points(self.current_component)
+            #regenerate control points using shared function
+            ensure_control_points(keyframes, use_smooth_defaults=True)
             self._update_plot()
             self._mark_unsaved()
             
             if self.log_callback:
                 self.log_callback(f"removed keyframe from {self.current_component}")
     
-    #generate interpolated points for playback
-    def _generate_playback_points(self, component_name, time_step=50):
-        if component_name not in self.sequence_data:
-            return []
-        
-        keyframes = self.sequence_data[component_name]
-        if len(keyframes) < 2:
-            return []
-        
-        points = []
-        
-        #generate points for each curve segment
-        for i in range(len(keyframes) - 1):
-            kf_start = keyframes[i]
-            kf_end = keyframes[i + 1]
-            
-            start_time = kf_start['time']
-            end_time = kf_end['time']
-            
-            #generate points at regular intervals
-            current_time = start_time
-            while current_time <= end_time:
-                #calculate interpolated angle using bezier curve
-                if current_time == start_time:
-                    angle = kf_start['angle']
-                elif current_time == end_time:
-                    angle = kf_end['angle']
-                else:
-                    #bezier interpolation
-                    t = (current_time - start_time) / (end_time - start_time)
-                    start_pos = (kf_start['time'], kf_start['angle'])
-                    end_pos = (kf_end['time'], kf_end['angle'])
-                    start_cp = self._control_point_absolute(kf_start, 'out')
-                    end_cp = self._control_point_absolute(kf_end, 'in')
-                    
-                    if start_cp and end_cp:
-                        _, angle = self._bezier_point(t, start_pos, start_cp, end_cp, end_pos)
-                    else:
-                        #linear fallback
-                        angle = kf_start['angle'] + t * (kf_end['angle'] - kf_start['angle'])
-                
-                points.append((current_time, int(round(angle))))
-                current_time += time_step
-        
-        return points
-    
-    #play current component sequence
+    #play current component sequence using shared interpolation
     def _play_current(self):
         if not self.current_component:
             messagebox.showinfo("no component", "no component selected")
             return
         
-        points = self._generate_playback_points(self.current_component)
-        if not points:
+        keyframes = self._get_current_sequence()
+        if len(keyframes) < 2:
             messagebox.showinfo("no sequence", "sequence needs at least 2 keyframes")
             return
         
-        sequences = {self.current_component: points}
+        #generate playback points using shared function
+        servo_config = self._get_servo_config(self.current_component)
+        playback_points = generate_playback_points(keyframes, servo_config, time_step=50)
+        
+        if not playback_points:
+            messagebox.showinfo("no points", "failed to generate playback points")
+            return
+        
+        sequences = {self.current_component: playback_points}
         self._execute_playback(sequences)
     
-    #play all component sequences
+    #play all component sequences using shared interpolation
     def _play_all(self):
         if not self.sequence_data:
             messagebox.showinfo("no sequences", "no sequences to play")
             return
         
         all_sequences = {}
-        for component_name in self.sequence_data:
-            points = self._generate_playback_points(component_name)
-            if points:
-                all_sequences[component_name] = points
+        for component_name, keyframes in self.sequence_data.items():
+            if len(keyframes) >= 2:
+                servo_config = self._get_servo_config(component_name)
+                playback_points = generate_playback_points(keyframes, servo_config, time_step=50)
+                if playback_points:
+                    all_sequences[component_name] = playback_points
         
         if not all_sequences:
             messagebox.showinfo("no valid sequences", "no sequences with enough keyframes")
@@ -764,9 +655,6 @@ class MotionEditor:
         for command in commands_to_execute:
             if self.serial_connection and self.serial_connection.is_connected:
                 self.serial_connection.send_command(command)
-            else:
-                if self.log_callback:
-                    self.log_callback(f"playback command: {command} (not connected)")
         
         #schedule next batch
         if remaining_commands and self.playback_active:
@@ -819,15 +707,28 @@ class MotionEditor:
         self.play_all_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
     
-    #save changes back to sequence data
+    #save changes - simplified without format conversion
     def _save_changes(self):
-        self.save_status = "saved"
-        self.status_label.config(text=f"status: {self.save_status}")
-        
-        if self.log_callback:
-            self.log_callback("motion editor changes saved")
-        
-        messagebox.showinfo("save successful", "motion curves saved successfully")
+        #push changes back to sequence manager via callback
+        if self.save_callback:
+            success, message = self.save_callback(self.sequence_data)
+            if success:
+                self.save_status = "saved"
+                self.status_label.config(text=f"status: {self.save_status}")
+                
+                if self.log_callback:
+                    self.log_callback("motion editor changes saved and applied to sequence")
+                
+                messagebox.showinfo("save successful", "motion curves saved successfully")
+            else:
+                if self.log_callback:
+                    self.log_callback(f"failed to save motion editor changes: {message}")
+                messagebox.showerror("save error", f"failed to save changes: {message}")
+        else:
+            #fallback if no callback provided
+            self.save_status = "saved"
+            self.status_label.config(text=f"status: {self.save_status}")
+            messagebox.showinfo("save successful", "motion curves saved successfully")
     
     #reset current component to default smooth curves
     def _reset_curves(self):
@@ -838,12 +739,12 @@ class MotionEditor:
             keyframes = self._get_current_sequence()
             
             if keyframes:
-                #clear control points and regenerate defaults
+                #clear control points and regenerate defaults using shared function
                 for kf in keyframes:
                     kf['cp_in'] = None
                     kf['cp_out'] = None
                 
-                self._ensure_control_points(self.current_component)
+                ensure_control_points(keyframes, use_smooth_defaults=True)
                 self._update_plot()
                 self._mark_unsaved()
                 
@@ -872,7 +773,7 @@ class MotionEditor:
         if self.log_callback:
             self.log_callback("motion editor closed")
     
-    #get updated sequence data for saving
+    #get updated sequence data for external use (no conversion needed)
     def get_sequence_data(self):
         return copy.deepcopy(self.sequence_data)
     
