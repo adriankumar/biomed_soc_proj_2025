@@ -136,10 +136,6 @@ def update_3d_plot(ax, scatter_dict, coord_dict, canvas_obj):
     canvas_obj.draw()
 
 
-
-
-
-
 def get_selected_coords_for_3d_plot(results):
     coord_dict = {
         'pose': {},
@@ -243,7 +239,6 @@ def draw_selected_dots(image, results):
 
     return coord_dict
 
-
 def calculate_angle(v1, v2):
     dot = np.dot(v1, v2)
     norms = np.linalg.norm(v1) * np.linalg.norm(v2)
@@ -257,12 +252,9 @@ def calculate_angle(v1, v2):
     return angle_deg  # In degrees
 
 
-
-
 def project_vector(v, onto):
     onto_unit = onto / np.linalg.norm(onto)
     return np.dot(v, onto_unit) * onto_unit
-
 
 
 def calculate_left_shoulder_servo_1(coord):
@@ -309,7 +301,6 @@ def calculate_left_shoulder_servo_1(coord):
 
 
 def calculate_left_shoulder_servo_2(coord):
-    
      # Check for required landmarks
     required_pose_keys = [11, 13, 23]
     required_hand_keys = [0, 5, 9, 17]
@@ -320,8 +311,7 @@ def calculate_left_shoulder_servo_2(coord):
     if not all(k in coord['left_hand'] for k in required_hand_keys):
         print("[WARN] Missing one or more left hand landmarks for shoulder servo 2")
         return None
-    
-    
+
     # Pose landmarks
     left_shoulder = np.array(coord['pose'][11])
     left_elbow = np.array(coord['pose'][13])
@@ -337,9 +327,6 @@ def calculate_left_shoulder_servo_2(coord):
         return None
 
     return calculate_angle(vec1, vec2)
-
-
-
 
 
 def calculate_left_shoulder_servo_3(coord):
@@ -380,13 +367,10 @@ def calculate_left_shoulder_servo_3(coord):
     left_ref_proj = project_vector(left_ref_raw, left_upper_arm_vector)
     left_shoulder_twist_ref = left_ref_raw - left_ref_proj
           
-    
-    
     if np.linalg.norm(left_forearm_perpendicular_vector) == 0 or np.linalg.norm(left_shoulder_twist_ref) == 0:
         print("[WARN] Zero-length vector in shoulder servo 3")
         return None
     
-  
     return calculate_angle(left_forearm_perpendicular_vector, left_shoulder_twist_ref)
 
 
@@ -405,8 +389,7 @@ def calculate_left_elbow_servo_1(coord):
     if not all(k in coord['left_hand'] for k in required_hand_keys):
         print("[WARN] Missing one or more left hand landmarks for elbow servo 1")
         return None
-    
-    
+
     # Pose landmarks
     left_shoulder = np.array(coord['pose'][11])
     right_shoulder = np.array(coord['pose'][12])
@@ -472,8 +455,6 @@ def calculate_left_elbow_servo_2(coord):
     return calculate_angle(left_palm_vector, left_palm_vector_perpendicular_vector)
 
 
-
-
 def left_hand_servo_thumb(coord):
     
     # Check for required landmarks
@@ -482,7 +463,6 @@ def left_hand_servo_thumb(coord):
     if not all(k in coord['left_hand'] for k in required_hand_keys):
         print("[WARN] Missing one or more left hand landmarks for shoulder servo 2")
         return None
-    
     
     # Hand landmarks
     left_wrist = np.array(coord['left_hand'][0])

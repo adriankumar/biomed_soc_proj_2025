@@ -10,10 +10,11 @@ from core.event_system import subscribe, Events, cleanup
 import threading
 import time
 
+
 #Content switcher is the additional tools frame
-class ContentSwitcher:
+class ContentSwitch:
     #manages additional tools and content switching including eye display
-    def __init__(self, parent, state, serial_connection, log_callback):
+    def __init__(self, parent, state, serial_connection, log_callback, options):
         self.frame = ttk.LabelFrame(parent, text="additional tools")
         self.state = state
         self.serial_connection = serial_connection
@@ -21,7 +22,14 @@ class ContentSwitcher:
         
         #content switching state
         self.selected_content = tk.StringVar()
-        self.content_options = ["visualisation", "sequence recording", "eye display"]
+        
+        #self.content_options = ["visualisation", "sequence recording", "eye display"]
+        
+        if options == "recording":
+            self.content_options = ["sequence recording"]
+        
+        elif options == "cam":
+            self.content_options = ["visualisation", "sequence recording", "eye display"]
         
         #sequence recording components
         self.sequence_recorder_widget = None
@@ -47,6 +55,7 @@ class ContentSwitcher:
     #set dependencies for sequence recording
     def set_sequence_dependencies(self, sequence_manager):
         self.sequence_manager = sequence_manager
+        self._create_content_frame()
     
     #create content switcher interface
     def _create_ui(self):
@@ -55,7 +64,8 @@ class ContentSwitcher:
         
         ttk.Label(selection_frame, text="select tool:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 8))
         
-        self.selected_content.set(self.content_options[0])
+        
+        self.selected_content.set(self.content_options[1]) # sequence recording
         
         for option in self.content_options:
             display_name = option.replace("_", " ")
@@ -69,9 +79,10 @@ class ContentSwitcher:
         
         #content container
         self.content_container = ttk.Frame(self.frame)
-        self.content_container.pack(fill="both", expand=True, padx=15, pady=(5, 15))
+        self.content_container.pack(fill="both", expand=True, padx=15, pady=(5, 15))        
         
-        self._create_content_frame()
+        #Commented this out so dependencies are injected before building content
+        #self._create_content_frame()
     
     #handle content selection change
     def _on_content_changed(self):
@@ -99,9 +110,10 @@ class ContentSwitcher:
         selected = self.selected_content.get()
         
         if selected == "visualisation":
-            self._create_visualisation_placeholder()
+            self._create_visualisation_content()
         elif selected == "sequence recording":
             self._create_sequence_recording_content()
+            print("SJSLKJLS")
         elif selected == "eye display":
             self._create_eye_display_content()
         else:
@@ -109,10 +121,12 @@ class ContentSwitcher:
     
     #create sequence recording content
     def _create_sequence_recording_content(self):
-        if not self.sequence_manager or not self.serial_connection:
-            self._create_sequence_unavailable_placeholder()
-            return
         
+        if not self.sequence_manager or not self.serial_connection:  
+            self._create_sequence_unavailable_placeholder()
+            print(self.sequence_manager)
+            return
+            
         if self.sequence_recorder_widget is None:
             self.sequence_recorder_widget = SequenceRecorderWidget(
                 parent=self.content_container,
@@ -149,7 +163,7 @@ class ContentSwitcher:
     
     #create placeholder content
     # Visualisation for Pose Estimation throught the box plot
-    def _create_visualisation_placeholder(self):
+    def _create_visualisation_content(self):
         from gui.pose_tracker import init_3d_plot
         from gui.pose_tracker import draw_selected_dots
         from gui.pose_tracker import update_3d_plot
@@ -471,11 +485,18 @@ class ServoControlGUI:
         )
         self.servo_controls.frame.grid(row=0, column=0, sticky="nw", padx=(0, 10))
         
+
         #content switcher (right) - pass serial connection for facial tracking
-        self.content_switcher = ContentSwitcher(
-            content_frame, self.state, self.serial_connection, self._log_message
-        )
+        self.content_switcher = ContentSwitch(
+            content_frame, self.state, self.serial_connection, self._log_message, "cam"
+        )  
         self.content_switcher.frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        
+        
+        """ self.content_switcher_2 = ContentSwitch(
+            content_frame, self.state, self.serial_connection, self._log_message, "cam"
+        )
+        self.content_switcher_2.frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0)) """
         
         #terminal section (bottom)
         self._create_terminal_section(main_frame)
