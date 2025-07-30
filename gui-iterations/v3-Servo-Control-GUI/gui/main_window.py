@@ -20,6 +20,10 @@ class ContentSwitch:
         self.serial_connection = serial_connection
         self.log_callback = log_callback
         
+        #State tracking attributes for visualisation
+        self.streaming_active = False
+        self.stream_thread = None
+        
         #content switching state
         self.selected_content = tk.StringVar()
         
@@ -113,7 +117,6 @@ class ContentSwitch:
             self._create_visualisation_content()
         elif selected == "sequence recording":
             self._create_sequence_recording_content()
-            print("SJSLKJLS")
         elif selected == "eye display":
             self._create_eye_display_content()
         else:
@@ -160,11 +163,38 @@ class ContentSwitch:
         self.servo_log_widget.see("end")
         self.servo_log_widget.config(state="disabled")
 
+    #Toggling stream on and off
+    def _toggle_stream(self):
+        # Disable the button immediately to prevent double-clicks
+        self.stream_button.config(state="disabled")
+
+        if not self.streaming_active:
+            self.streaming_active = True
+            self.stream_button.config(text="Stop Stream")
+
+            self.stream_thread = threading.Thread(
+                target=self._stream_loop_wrapper,
+                daemon=True
+            )
+            self.stream_thread.start()
+
+        else:
+            # Stop the stream
+            self.streaming_active = False
+            self.stream_button.config(text="Start Stream")
+
+            # Re-enable the button right away when stopping
+            self.stream_button.config(state="normal")
+
     
-    #create placeholder content
-    # Visualisation for Pose Estimation throught the box plot
-    def _create_visualisation_content(self):
-        from gui.pose_tracker import init_3d_plot
+    def _stream_loop_wrapper(self):
+
+        self._local_stream_loop(self.ax, self.scatter_dict, self.canvas_obj, lambda: self.streaming_active)
+
+    
+    def _local_stream_loop(self, ax, scatter_dict, canvas_obj, is_active_callback):
+        
+        #from gui.pose_tracker import init_3d_plot
         from gui.pose_tracker import draw_selected_dots
         from gui.pose_tracker import update_3d_plot
         from gui.pose_tracker import calculate_left_shoulder_servo_1, calculate_left_shoulder_servo_2, calculate_left_shoulder_servo_3
@@ -183,174 +213,187 @@ class ContentSwitch:
         mp_drawing = mp.solutions.drawing_utils
         mp_drawing_styles = mp.solutions.drawing_styles
         mp_holistic = mp.solutions.holistic
+        
+        cap = cv2.VideoCapture(0)
+        
+        with mp_holistic.Holistic(
+            model_complexity=1,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
+        ) as holistic:       
 
-        def stream_loop(ax, scatter_dict, canvas_obj):
-            cap = cv2.VideoCapture(0)
-            
-            with mp_holistic.Holistic(
-                model_complexity=1,
-                min_detection_confidence=0.7,
-                min_tracking_confidence=0.7
-            ) as holistic:
-            
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    
-                    angle_mins = {
-                        "left_shoulder_1": float("inf"), "left_shoulder_2": float("inf"), "left_shoulder_3": float("inf"),
-                        "left_elbow_1": float("inf"), "left_elbow_2": float("inf"),
-                        "left_thumb": float("inf"), "left_index": float("inf"), "left_middle": float("inf"), "left_ring": float("inf"), "left_pinky": float("inf")
-                    }
-                    angle_maxs = {
-                        "left_shoulder_1": float("-inf"), "left_shoulder_2": float("-inf"), "left_shoulder_3": float("-inf"),
-                        "left_elbow_1": float("-inf"), "left_elbow_2": float("-inf"),
-                        "left_thumb": float("-inf"), "left_index": float("-inf"), "left_middle": float("-inf"), "left_ring": float("-inf"), "left_pinky": float("-inf")
-                    }
-                    
-                    last_print_time = time.time()  # Add this before the loop starts
-                    
-                    while cap.isOpened():
-                        ret, frame = cap.read()
-                        if not ret:
-                            break
-
-                        # Convert to RGB
-                        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        image.flags.writeable = False
-                        results = holistic.process(image)                
-
-                        # Convert back to BGR
-                        image.flags.writeable = True
-                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                        
-                        # Draw and get landmark coordinates
-                        coord_dict = draw_selected_dots(image, results)
-                        
-                        self.coord_dict_3d = get_selected_coords_for_3d_plot(results)
-                        
-                        update_3d_plot(ax, scatter_dict, self.coord_dict_3d, canvas_obj)
-
-                        # Calculate angles in parallel
-                        futures = [
-                            executor.submit(calculate_left_shoulder_servo_1, self.coord_dict_3d ),
-                            executor.submit(calculate_left_shoulder_servo_2, self.coord_dict_3d ),
-                            executor.submit(calculate_left_shoulder_servo_3, self.coord_dict_3d ),
-                            executor.submit(calculate_left_elbow_servo_1, self.coord_dict_3d ),
-                            executor.submit(calculate_left_elbow_servo_2, self.coord_dict_3d ),
-                            executor.submit(left_hand_servo_thumb, self.coord_dict_3d ),
-                            executor.submit(left_hand_servo_index, self.coord_dict_3d ),
-                            executor.submit(left_hand_servo_middle, self.coord_dict_3d ),
-                            executor.submit(left_hand_servo_ring, self.coord_dict_3d ),
-                            executor.submit(left_hand_servo_pinky, self.coord_dict_3d ),
-                        ]
-                        results_angles = [f.result() for f in futures]
-
-                        # Unpack results as needed
-                        (left_shoulder_servo_1, left_shoulder_servo_2, left_shoulder_servo_3,
-                        left_elbow_servo_1, left_elbow_servo_2,
-                        left_hand_servo_thumb_angle, left_hand_servo_index_angle,
-                        left_hand_servo_middle_angle, left_hand_servo_ring_angle,
-                        left_hand_servo_pinky_angle) = results_angles
-                        
-                        # Update min/max
-                        if left_shoulder_servo_1 is not None:
-                            angle_mins["left_shoulder_1"] = min(angle_mins["left_shoulder_1"], left_shoulder_servo_1)
-                            angle_maxs["left_shoulder_1"] = max(angle_maxs["left_shoulder_1"], left_shoulder_servo_1)
-                        
-                        if left_shoulder_servo_2 is not None:
-                            angle_mins["left_shoulder_2"] = min(angle_mins["left_shoulder_2"], left_shoulder_servo_2)
-                            angle_maxs["left_shoulder_2"] = max(angle_maxs["left_shoulder_2"], left_shoulder_servo_2)
-
-                        if left_shoulder_servo_3 is not None:
-                            angle_mins["left_shoulder_3"] = min(angle_mins["left_shoulder_3"], left_shoulder_servo_3)
-                            angle_maxs["left_shoulder_3"] = max(angle_maxs["left_shoulder_3"], left_shoulder_servo_3)
-                        
-                        if left_elbow_servo_1 is not None:
-                            angle_mins["left_elbow_1"] = min(angle_mins["left_elbow_1"], left_elbow_servo_1)
-                            angle_maxs["left_elbow_1"] = max(angle_maxs["left_elbow_1"], left_elbow_servo_1)
-                    
-                        if left_elbow_servo_2 is not None:
-                            angle_mins["left_elbow_2"] = min(angle_mins["left_elbow_2"], left_elbow_servo_2)
-                            angle_maxs["left_elbow_2"] = max(angle_maxs["left_elbow_2"], left_elbow_servo_2)
-
-                        if left_hand_servo_thumb_angle is not None:
-                            angle_mins["left_thumb"] = min(angle_mins["left_thumb"], left_hand_servo_thumb_angle)
-                            angle_maxs["left_thumb"] = max(angle_maxs["left_thumb"], left_hand_servo_thumb_angle)
-
-                        if left_hand_servo_index_angle is not None:
-                            angle_mins["left_index"] = min(angle_mins["left_index"], left_hand_servo_index_angle)
-                            angle_maxs["left_index"] = max(angle_maxs["left_index"], left_hand_servo_index_angle)
-
-                        if left_hand_servo_middle_angle is not None:    
-                            angle_mins["left_middle"] = min(angle_mins["left_middle"], left_hand_servo_middle_angle)
-                            angle_maxs["left_middle"] = max(angle_maxs["left_middle"], left_hand_servo_middle_angle)
-
-                        if left_hand_servo_ring_angle is not None:
-                            angle_mins["left_ring"] = min(angle_mins["left_ring"], left_hand_servo_ring_angle)
-                            angle_maxs["left_ring"] = max(angle_maxs["left_ring"], left_hand_servo_ring_angle)
-
-                        if left_hand_servo_pinky_angle is not None:
-                            angle_mins["left_pinky"] = min(angle_mins["left_pinky"], left_hand_servo_pinky_angle)
-                            angle_maxs["left_pinky"] = max(angle_maxs["left_pinky"], left_hand_servo_pinky_angle)           
-                        
-
-                        # Inside while loop, after unpacking results
-                        current_time = time.time()
-                        if current_time - last_print_time >= 0.5:
-
-                            self.update_servo_log("---------------------------------------------------------------------------------------------")  # another blank line before shoulder
-
-                            self.update_servo_log(" ".join([
-                                f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
-                                for j, a in [
-                                    ("LShldr1", left_shoulder_servo_1),
-                                    ("LShldr2", left_shoulder_servo_2),
-                                    ("LShldr3", left_shoulder_servo_3)
-                                ]
-                            ]))
-
-                            self.update_servo_log(" ".join([
-                                f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
-                                for j, a in [
-                                    ("LElbw1", left_elbow_servo_1),
-                                    ("LElbw2", left_elbow_servo_2)
-                                ]
-                            ]))
-
-                            self.update_servo_log(" ".join([
-                                f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
-                                for j, a in [
-                                    ("LThumb", left_hand_servo_thumb_angle),
-                                    ("LIndex", left_hand_servo_index_angle),
-                                    ("LMiddle", left_hand_servo_middle_angle),
-                                    ("LRing", left_hand_servo_ring_angle),
-                                    ("LPinky", left_hand_servo_pinky_angle)
-                                ]
-                            ]))
-
-                            self.update_servo_log("---------------------------------------------------------------------------------------------")  # blank line before shoulder
-                           
-
-                            last_print_time = current_time
-                    
-                        # Show the annotated frame
-                        cv2.imshow("Hand + Body Detector", image)
-                        if cv2.waitKey(1) & 0xFF == ord('q'):
-                            
-                            print("\n=== Final Servo Angle Ranges ===")
-                            for joint in angle_mins:
-                                print(f"{joint.capitalize()} -> Min: {angle_mins[joint]:.2f}, Max: {angle_maxs[joint]:.2f}")
-                            break
-            
-            cap.release()
-            cv2.destroyAllWindows()
-            plt.ioff()
-            plt.close()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                self.stream_button.config(state="normal")
                 
+                angle_mins = {
+                    "left_shoulder_1": float("inf"), "left_shoulder_2": float("inf"), "left_shoulder_3": float("inf"),
+                    "left_elbow_1": float("inf"), "left_elbow_2": float("inf"),
+                    "left_thumb": float("inf"), "left_index": float("inf"), "left_middle": float("inf"), "left_ring": float("inf"), "left_pinky": float("inf")
+                }
+                angle_maxs = {
+                    "left_shoulder_1": float("-inf"), "left_shoulder_2": float("-inf"), "left_shoulder_3": float("-inf"),
+                    "left_elbow_1": float("-inf"), "left_elbow_2": float("-inf"),
+                    "left_thumb": float("-inf"), "left_index": float("-inf"), "left_middle": float("-inf"), "left_ring": float("-inf"), "left_pinky": float("-inf")
+                }
+                
+                last_print_time = time.time()  # Add this before the loop starts
+                
+                while cap.isOpened() and is_active_callback():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+
+                    # Convert to RGB
+                    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    image.flags.writeable = False
+                    results = holistic.process(image)                
+
+                    # Convert back to BGR
+                    image.flags.writeable = True
+                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    
+                    # Draw and get landmark coordinates
+                    coord_dict = draw_selected_dots(image, results)
+                    
+                    self.coord_dict_3d = get_selected_coords_for_3d_plot(results)
+                    
+                    update_3d_plot(ax, scatter_dict, self.coord_dict_3d, canvas_obj)
+
+                    # Calculate angles in parallel
+                    futures = [
+                        executor.submit(calculate_left_shoulder_servo_1, self.coord_dict_3d ),
+                        executor.submit(calculate_left_shoulder_servo_2, self.coord_dict_3d ),
+                        executor.submit(calculate_left_shoulder_servo_3, self.coord_dict_3d ),
+                        executor.submit(calculate_left_elbow_servo_1, self.coord_dict_3d ),
+                        executor.submit(calculate_left_elbow_servo_2, self.coord_dict_3d ),
+                        executor.submit(left_hand_servo_thumb, self.coord_dict_3d ),
+                        executor.submit(left_hand_servo_index, self.coord_dict_3d ),
+                        executor.submit(left_hand_servo_middle, self.coord_dict_3d ),
+                        executor.submit(left_hand_servo_ring, self.coord_dict_3d ),
+                        executor.submit(left_hand_servo_pinky, self.coord_dict_3d ),
+                    ]
+                    results_angles = [f.result() for f in futures]
+
+                    # Unpack results as needed
+                    (left_shoulder_servo_1, left_shoulder_servo_2, left_shoulder_servo_3,
+                    left_elbow_servo_1, left_elbow_servo_2,
+                    left_hand_servo_thumb_angle, left_hand_servo_index_angle,
+                    left_hand_servo_middle_angle, left_hand_servo_ring_angle,
+                    left_hand_servo_pinky_angle) = results_angles
+                    
+                    # Update min/max
+                    if left_shoulder_servo_1 is not None:
+                        angle_mins["left_shoulder_1"] = min(angle_mins["left_shoulder_1"], left_shoulder_servo_1)
+                        angle_maxs["left_shoulder_1"] = max(angle_maxs["left_shoulder_1"], left_shoulder_servo_1)
+                    
+                    if left_shoulder_servo_2 is not None:
+                        angle_mins["left_shoulder_2"] = min(angle_mins["left_shoulder_2"], left_shoulder_servo_2)
+                        angle_maxs["left_shoulder_2"] = max(angle_maxs["left_shoulder_2"], left_shoulder_servo_2)
+
+                    if left_shoulder_servo_3 is not None:
+                        angle_mins["left_shoulder_3"] = min(angle_mins["left_shoulder_3"], left_shoulder_servo_3)
+                        angle_maxs["left_shoulder_3"] = max(angle_maxs["left_shoulder_3"], left_shoulder_servo_3)
+                    
+                    if left_elbow_servo_1 is not None:
+                        angle_mins["left_elbow_1"] = min(angle_mins["left_elbow_1"], left_elbow_servo_1)
+                        angle_maxs["left_elbow_1"] = max(angle_maxs["left_elbow_1"], left_elbow_servo_1)
+                
+                    if left_elbow_servo_2 is not None:
+                        angle_mins["left_elbow_2"] = min(angle_mins["left_elbow_2"], left_elbow_servo_2)
+                        angle_maxs["left_elbow_2"] = max(angle_maxs["left_elbow_2"], left_elbow_servo_2)
+
+                    if left_hand_servo_thumb_angle is not None:
+                        angle_mins["left_thumb"] = min(angle_mins["left_thumb"], left_hand_servo_thumb_angle)
+                        angle_maxs["left_thumb"] = max(angle_maxs["left_thumb"], left_hand_servo_thumb_angle)
+
+                    if left_hand_servo_index_angle is not None:
+                        angle_mins["left_index"] = min(angle_mins["left_index"], left_hand_servo_index_angle)
+                        angle_maxs["left_index"] = max(angle_maxs["left_index"], left_hand_servo_index_angle)
+
+                    if left_hand_servo_middle_angle is not None:    
+                        angle_mins["left_middle"] = min(angle_mins["left_middle"], left_hand_servo_middle_angle)
+                        angle_maxs["left_middle"] = max(angle_maxs["left_middle"], left_hand_servo_middle_angle)
+
+                    if left_hand_servo_ring_angle is not None:
+                        angle_mins["left_ring"] = min(angle_mins["left_ring"], left_hand_servo_ring_angle)
+                        angle_maxs["left_ring"] = max(angle_maxs["left_ring"], left_hand_servo_ring_angle)
+
+                    if left_hand_servo_pinky_angle is not None:
+                        angle_mins["left_pinky"] = min(angle_mins["left_pinky"], left_hand_servo_pinky_angle)
+                        angle_maxs["left_pinky"] = max(angle_maxs["left_pinky"], left_hand_servo_pinky_angle)           
+                    
+
+                    # Inside while loop, after unpacking results
+                    current_time = time.time()
+                    if current_time - last_print_time >= 0.5:
+
+                        self.update_servo_log("---------------------------------------------------------------------------------------------")  # another blank line before shoulder
+
+                        self.update_servo_log(" ".join([
+                            f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
+                            for j, a in [
+                                ("LShldr1", left_shoulder_servo_1),
+                                ("LShldr2", left_shoulder_servo_2),
+                                ("LShldr3", left_shoulder_servo_3)
+                            ]
+                        ]))
+
+                        self.update_servo_log(" ".join([
+                            f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
+                            for j, a in [
+                                ("LElbw1", left_elbow_servo_1),
+                                ("LElbw2", left_elbow_servo_2)
+                            ]
+                        ]))
+
+                        self.update_servo_log(" ".join([
+                            f"{j}: {a:.2f}°" if a is not None else f"{j}: N/A"
+                            for j, a in [
+                                ("LThumb", left_hand_servo_thumb_angle),
+                                ("LIndex", left_hand_servo_index_angle),
+                                ("LMiddle", left_hand_servo_middle_angle),
+                                ("LRing", left_hand_servo_ring_angle),
+                                ("LPinky", left_hand_servo_pinky_angle)
+                            ]
+                        ]))
+
+                        self.update_servo_log("---------------------------------------------------------------------------------------------")  # blank line before shoulder
+                        
+
+                        last_print_time = current_time
+                
+                    # Show the annotated frame
+                    cv2.imshow("Hand + Body Detector", image)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        
+                        print("\n=== Final Servo Angle Ranges ===")
+                        for joint in angle_mins:
+                            print(f"{joint.capitalize()} -> Min: {angle_mins[joint]:.2f}, Max: {angle_maxs[joint]:.2f}")
+                        break
+        
+        cap.release()
+        cv2.destroyAllWindows()
+        plt.ioff()
+        plt.close()
+        
+        
+    #create placeholder content
+    # Visualisation for Pose Estimation throught the box plot
+    def _create_visualisation_content(self):       
+        
+        from gui.pose_tracker import init_3d_plot
+        
         if self.visualisation_widget is None:
             # Create a container to hold both the plot and the log
             visualisation_container = ttk.Frame(self.content_container)
             visualisation_container.pack(expand=True, fill="both")
+            
+            self.stream_button = ttk.Button(
+                visualisation_container,
+                text="Start Stream",
+                command=self._toggle_stream
+            )
+            self.stream_button.pack(pady=(5, 5))
             
             # Initialize the 3D plot 
             plot_frame = ttk.Frame(visualisation_container, height=300)  # Set desired height here
@@ -369,12 +412,17 @@ class ContentSwitch:
             self.visualisation_widget = visualisation_container
             
             # Start the streaming loop in a separate thread
-            threading.Thread(
-                target=stream_loop,
-                args=(self.ax, self.scatter_dict, self.canvas_obj),
+            self.stream_thread = threading.Thread(
+                target=lambda: self._local_stream_loop(
+                    self.ax,
+                    self.scatter_dict,
+                    self.canvas_obj,
+                    lambda: self.streaming_active
+                ),
                 daemon=True
-            ).start()
-          
+            )
+            self.stream_thread.start()
+            
     
     def _create_sequence_unavailable_placeholder(self):
         self._create_placeholder("sequence recording unavailable", "red", "dependencies not initialised")
