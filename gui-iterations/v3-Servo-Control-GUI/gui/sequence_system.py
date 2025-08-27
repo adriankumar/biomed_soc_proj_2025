@@ -470,11 +470,10 @@ class SequenceManager:
 
 class PlaybackManager:
     #manages sequence playback using unified bezier interpolation
-    def __init__(self, sequence_manager, serial_connection, log_callback, gui_callback):
+    def __init__(self, sequence_manager, serial_connection, log_callback):
         self.sequence_manager = sequence_manager
         self.serial_connection = serial_connection
         self.log_callback = log_callback
-        self.gui_callback = gui_callback
         
         self.is_playing_flag = False
         self.playback_thread = None
@@ -483,9 +482,17 @@ class PlaybackManager:
     #check playback status
     def is_playing(self):
         return self.is_playing_flag
+
+    def _notify_completion(self, success=True, error_msg=None):
+        if hasattr(self, 'completion_callback') and self.completion_callback:
+            try:
+                self.completion_callback(success, error_msg)
+            except Exception as e:
+                if self.log_callback:
+                    self.log_callback(f"completion callback error: {str(e)}")
     
     #start sequence playback using bezier interpolation
-    def start_playback(self):
+    def start_playback(self, completion_callback):
         if self.is_playing_flag:
             return False, "playback already in progress"
         
@@ -496,6 +503,7 @@ class PlaybackManager:
             return False, "serial connection required"
         
         self.stop_requested = False
+        self.completion_callback = completion_callback
         self.playback_thread = threading.Thread(target=self._playback_thread, daemon=True)
         self.playback_thread.start()
         
@@ -512,11 +520,11 @@ class PlaybackManager:
         self._reset_playback_state()
     
     #reset playback state
-    def _reset_playback_state(self):
+    def _reset_playback_state(self, success=True, error_msg=None):
         self.is_playing_flag = False
         self.stop_requested = False
         self.playback_thread = None
-        self._notify_gui("playback_stopped")
+        self._notify_completion(success, error_msg)
     
     #notify gui of events
     def _notify_gui(self, event_type, *args):
@@ -531,7 +539,6 @@ class PlaybackManager:
     def _playback_thread(self):
         try:
             self.is_playing_flag = True
-            self._notify_gui("playback_started")
             
             total_duration = self.sequence_manager.get_total_duration()
             
@@ -543,15 +550,14 @@ class PlaybackManager:
             
             if self.log_callback:
                 self.log_callback("bezier sequence playback completed")
+            
+            self._reset_playback_state(success=True)
                 
         except Exception as e:
             error_msg = f"playback error: {str(e)}"
             if self.log_callback:
                 self.log_callback(error_msg)
-            self._notify_gui("playback_error", error_msg)
-            
-        finally:
-            self._reset_playback_state()
+            self._reset_playback_state(success=False, error_msg=error_msg)
     
     #execute sequence using unified bezier interpolation
     def _execute_bezier_playback(self, total_duration):
@@ -791,12 +797,11 @@ class SequenceRecorderWidget:
         self.delay_var = tk.DoubleVar(value=DEFAULT_KEYFRAME_DELAY)
         self.selected_step_index = None
         
-        #playback manager using unified bezier system
+        #playback manager using simplified callback system
         self.playback_manager = PlaybackManager(
             sequence_manager=sequence_manager,
             serial_connection=serial_connection,
-            log_callback=log_callback,
-            gui_callback=self._on_playback_event
+            log_callback=log_callback
         )
         
         #motion editor window reference
@@ -961,14 +966,44 @@ class SequenceRecorderWidget:
             messagebox.showwarning("not connected", "serial connection required for playback")
             return
         
-        success, message = self.playback_manager.start_playback()
+        #update gui immediately before starting playback
+        self._update_button_states_for_playing()
+        self.timeline_visualiser.start_playback_animation(self.sequence_manager.get_total_duration())
+        
+        #start playback with completion callback
+        success, message = self.playback_manager.start_playback(self._on_playback_complete)
         if not success:
+            #reset gui if playback failed to start
+            self._update_button_states()
+            self.timeline_visualiser.stop_playback_animation()
             messagebox.showerror("playback error", message)
     
     #stop playback
     def _stop_playback(self):
         self.playback_manager.stop_playback()
     
+    #handle playback completion with thread-safe gui updates
+    def _on_playback_complete(self, success, error_msg=None):
+        self.frame.after(0, self._update_button_states)
+        self.frame.after(0, self.timeline_visualiser.stop_playback_animation)
+        
+        if not success and error_msg:
+            self.frame.after(0, lambda: messagebox.showerror("playback error", error_msg))
+    
+    #set button states for active playback mode
+    def _update_button_states_for_playing(self):
+        self.record_button.config(state="disabled")
+        self.play_button.config(state="disabled") 
+        self.stop_button.config(state="normal")
+        self.clear_button.config(state="disabled")
+        self.save_button.config(state="disabled")
+        self.load_button.config(state="disabled")
+        self.remove_button.config(state="disabled")
+        self.preview_button.config(state="disabled")
+        self.edit_delay_button.config(state="disabled")
+        self.delay_spinbox.config(state="disabled")
+        self.motion_editor_button.config(state="disabled")
+
     #clear sequence
     def _clear_sequence(self):
         if not self.sequence_manager.has_keyframes():
@@ -1079,19 +1114,19 @@ class SequenceRecorderWidget:
         self._update_all_displays()
     
     #handle playback events
-    def _on_playback_event(self, event_type, *args):
-        if event_type == "playbook_started":
-            self.frame.after(0, self._update_button_states)
-            self.frame.after(0, lambda: self.timeline_visualiser.start_playback_animation(
-                self.sequence_manager.get_total_duration()))
+    # def _on_playback_event(self, event_type, *args):
+    #     if event_type == "playbook_started":
+    #         self.frame.after(0, self._update_button_states)
+    #         self.frame.after(0, lambda: self.timeline_visualiser.start_playback_animation(
+    #             self.sequence_manager.get_total_duration()))
             
-        elif event_type == "playbook_stopped":
-            self.frame.after(0, self._update_button_states)
-            self.frame.after(0, self.timeline_visualiser.stop_playback_animation)
+    #     elif event_type == "playbook_stopped":
+    #         self.frame.after(0, self._update_button_states)
+    #         self.frame.after(0, self.timeline_visualiser.stop_playback_animation)
             
-        elif event_type == "playbook_error":
-            error_msg = args[0] if args else "unknown error"
-            self.frame.after(0, lambda: messagebox.showerror("playback error", error_msg))
+    #     elif event_type == "playbook_error":
+    #         error_msg = args[0] if args else "unknown error"
+    #         self.frame.after(0, lambda: messagebox.showerror("playback error", error_msg))
 
     #show modal dialog for editing keyframe delay with validation
     def _show_delay_edit_dialog(self, current_delay):
