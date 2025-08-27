@@ -106,6 +106,7 @@ class SequenceManager:
         return True, "keyframe recorded successfully"
     
     #update sequence metadata from current bezier data
+   
     def _update_metadata(self):
         total_keyframes = 0
         component_count = len(self.sequence_data["servo_sequences"])
@@ -115,6 +116,9 @@ class SequenceManager:
         
         self.sequence_data["metadata"]["total_keyframes"] = total_keyframes
         self.sequence_data["metadata"]["component_count"] = component_count
+        
+        #update next recording time to end of sequence plus default delay
+        self.next_recording_time = self.get_total_duration() + DEFAULT_KEYFRAME_DELAY
     
     #get total keyframe count across all components
     def _get_total_keyframe_count(self):
@@ -415,6 +419,53 @@ class SequenceManager:
             ensure_control_points(self.sequence_data["servo_sequences"][component_name], use_smooth_defaults=True)
         
         self.next_recording_time = self.get_total_duration()
+
+    #edit delay of specific keyframe with validation and cascade updates
+    def edit_keyframe_delay(self, display_index, new_delay):
+        if not (MIN_KEYFRAME_INTERVAL <= new_delay <= MAX_KEYFRAME_DELAY):
+            return False, f"delay must be between {MIN_KEYFRAME_INTERVAL} and {MAX_KEYFRAME_DELAY}"
+        
+        keyframes = self.get_keyframes()
+        if display_index >= len(keyframes) - 1:
+            return False, "cannot edit delay of last keyframe"
+        
+        #calculate duration impact
+        current_delay = keyframes[display_index]["delay_to_next"]
+        time_change = new_delay - current_delay
+        new_total_duration = self.get_total_duration() + time_change
+        
+        if new_total_duration > MAX_SEQUENCE_DURATION:
+            return False, f"total duration would exceed {MAX_SEQUENCE_DURATION} seconds"
+        
+        #perform atomic timestamp rebuild
+        success = self._rebuild_timestamps_from_display_index(display_index, new_delay)
+        if success:
+            self._update_metadata()
+            self._notify_gui(Events.SEQUENCE_UPDATED)
+            return True, "delay updated successfully"
+        
+        return False, "failed to update timestamps"
+
+    #rebuild all component timestamps after delay change with cascade effect
+    def _rebuild_timestamps_from_display_index(self, display_index, new_delay):
+        keyframes = self.get_keyframes()
+        current_delay = keyframes[display_index]["delay_to_next"]
+        time_shift_ms = round((new_delay - current_delay) * 1000)
+        
+        #identify cascade boundary timestamp
+        cascade_start_time = round(keyframes[display_index + 1]["absolute_time"] * 1000)
+        
+        #apply timestamp shift to all affected keyframes across all components
+        for component_name, bezier_keyframes in self.sequence_data["servo_sequences"].items():
+            for keyframe in bezier_keyframes:
+                if keyframe["time"] >= cascade_start_time:
+                    keyframe["time"] += time_shift_ms
+        
+        #regenerate bezier control points for smooth curves
+        for component_name in self.sequence_data["servo_sequences"]:
+            ensure_control_points(self.sequence_data["servo_sequences"][component_name], use_smooth_defaults=True)
+        
+        return True
 
 
 class PlaybackManager:
@@ -833,7 +884,7 @@ class SequenceRecorderWidget:
         
         self.step_tree.bind("<<TreeviewSelect>>", self._on_step_selected)
         
-        #step management
+        #step management with edit delay functionality
         step_frame = ttk.Frame(main_frame)
         step_frame.pack(fill="x", pady=5)
         
@@ -842,6 +893,9 @@ class SequenceRecorderWidget:
         
         self.preview_button = ttk.Button(step_frame, text="preview", command=self._preview_selected_step)
         self.preview_button.pack(side="left", padx=5)
+        
+        self.edit_delay_button = ttk.Button(step_frame, text="edit delay", command=self._on_edit_delay_button_clicked)
+        self.edit_delay_button.pack(side="left", padx=5)
         
         #force initial update
         self._update_all_displays()
@@ -1026,17 +1080,91 @@ class SequenceRecorderWidget:
     
     #handle playback events
     def _on_playback_event(self, event_type, *args):
-        if event_type == "playback_started":
-            self._update_button_states()
-            self.timeline_visualiser.start_playback_animation(self.sequence_manager.get_total_duration())
+        if event_type == "playbook_started":
+            self.frame.after(0, self._update_button_states)
+            self.frame.after(0, lambda: self.timeline_visualiser.start_playback_animation(
+                self.sequence_manager.get_total_duration()))
             
-        elif event_type == "playback_stopped":
-            self._update_button_states()
-            self.timeline_visualiser.stop_playback_animation()
+        elif event_type == "playbook_stopped":
+            self.frame.after(0, self._update_button_states)
+            self.frame.after(0, self.timeline_visualiser.stop_playback_animation)
             
-        elif event_type == "playback_error":
+        elif event_type == "playbook_error":
             error_msg = args[0] if args else "unknown error"
-            messagebox.showerror("playback error", error_msg)
+            self.frame.after(0, lambda: messagebox.showerror("playback error", error_msg))
+
+    #show modal dialog for editing keyframe delay with validation
+    def _show_delay_edit_dialog(self, current_delay):
+        dialog = tk.Toplevel(self.frame)
+        dialog.title("edit keyframe delay")
+        dialog.geometry("300x150")
+        dialog.resizable(False, False)
+        
+        #centre dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (300 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (150 // 2)
+        dialog.geometry(f"300x150+{x}+{y}")
+        
+        #make modal
+        dialog.transient(self.frame)
+        dialog.grab_set()
+        
+        result = [None]  #mutable container for result
+        
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(expand=True, fill="both", padx=20, pady=20)
+        
+        ttk.Label(main_frame, text="delay to next step (seconds):").pack(pady=(0, 10))
+        
+        delay_var = tk.DoubleVar(value=current_delay)
+        delay_entry = ttk.Entry(main_frame, textvariable=delay_var, width=10)
+        delay_entry.pack(pady=(0, 20))
+        delay_entry.select_range(0, tk.END)
+        delay_entry.focus()
+        
+        def on_ok():
+            try:
+                new_delay = delay_var.get()
+                if new_delay > 0:
+                    result[0] = new_delay
+                    dialog.destroy()
+            except tk.TclError:
+                pass
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack()
+        
+        ttk.Button(button_frame, text="ok", command=on_ok).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="cancel", command=on_cancel).pack(side="left", padx=5)
+        
+        delay_entry.bind("<Return>", lambda e: on_ok())
+        delay_entry.bind("<Escape>", lambda e: on_cancel())
+        
+        dialog.wait_window()
+        return result[0]
+
+    #handle edit delay button click with selection validation
+    def _on_edit_delay_button_clicked(self):
+        if self.selected_step_index is None:
+            return
+        
+        keyframes = self.sequence_manager.get_keyframes()
+        if self.selected_step_index >= len(keyframes) - 1:
+            return  #cannot edit last keyframe delay
+        
+        current_delay = keyframes[self.selected_step_index]["delay_to_next"]
+        new_delay = self._show_delay_edit_dialog(current_delay)
+        
+        if new_delay is not None:
+            success, message = self.sequence_manager.edit_keyframe_delay(self.selected_step_index, new_delay)
+            if success:
+                self.log_callback(f"updated keyframe {self.selected_step_index + 1} delay to {new_delay}s")
+            else:
+                messagebox.showerror("edit error", message)
     
     #update all displays
     def _update_all_displays(self):
@@ -1081,6 +1209,12 @@ class SequenceRecorderWidget:
         has_selection = self.selected_step_index is not None
         is_connected = self.serial_connection.is_connected
         
+        #calculate if selected keyframe can have delay edited
+        can_edit_delay = False
+        if has_selection and has_keyframes and not is_playing:
+            keyframes = self.sequence_manager.get_keyframes()
+            can_edit_delay = self.selected_step_index < len(keyframes) - 1  #not last keyframe
+        
         self.record_button.config(state="normal" if not is_playing else "disabled")
         self.play_button.config(state="normal" if has_keyframes and not is_playing and is_connected else "disabled")
         self.stop_button.config(state="normal" if is_playing else "disabled")
@@ -1091,6 +1225,7 @@ class SequenceRecorderWidget:
         
         self.remove_button.config(state="normal" if has_selection and not is_playing else "disabled")
         self.preview_button.config(state="normal" if has_selection and not is_playing and is_connected else "disabled")
+        self.edit_delay_button.config(state="normal" if can_edit_delay else "disabled")
         
         self.delay_spinbox.config(state="normal" if not is_playing else "disabled")
         
@@ -1122,3 +1257,4 @@ class SequenceRecorderWidget:
     
     def __del__(self):
         self.cleanup()
+    
