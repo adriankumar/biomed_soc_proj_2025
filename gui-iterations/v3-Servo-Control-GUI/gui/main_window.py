@@ -10,7 +10,21 @@ from core.event_system import subscribe, Events, cleanup
 import threading
 import time
 
+from gui.pose_tracker import init_3d_plot
+from gui.pose_tracker import draw_selected_dots
+from gui.pose_tracker import update_3d_plot
+from gui.pose_tracker import calculate_left_shoulder_servo_1, calculate_left_shoulder_servo_2, calculate_left_shoulder_servo_3
+from gui.pose_tracker import calculate_left_elbow_servo_1, calculate_left_elbow_servo_2
+from gui.pose_tracker import left_hand_servo_thumb, left_hand_servo_index, left_hand_servo_middle, left_hand_servo_ring, left_hand_servo_pinky   
+from gui.pose_tracker import get_selected_coords_for_3d_plot
+from gui.pose_tracker import draw_selected_dots
 
+import cv2
+import mediapipe as mp
+import matplotlib.pyplot as plt
+import numpy as np
+import concurrent.futures
+        
 #Content switcher is the additional tools frame
 class ContentSwitch:
     #manages additional tools and content switching including eye display
@@ -33,7 +47,7 @@ class ContentSwitch:
             self.content_options = ["sequence recording"]
         
         elif options == "cam":
-            self.content_options = ["visualisation", "sequence recording", "eye display"]
+            self.content_options = ["visualisation", "eye display"]
         
         #sequence recording components
         self.sequence_recorder_widget = None
@@ -65,12 +79,9 @@ class ContentSwitch:
     def _create_ui(self):
         selection_frame = ttk.Frame(self.frame)
         selection_frame.pack(fill="x", padx=15, pady=10)
-        
         ttk.Label(selection_frame, text="select tool:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 8))
         
-        
-        self.selected_content.set(self.content_options[1]) # sequence recording
-        
+        self.selected_content.set(self.content_options[0])
         for option in self.content_options:
             display_name = option.replace("_", " ")
             ttk.Radiobutton(
@@ -127,7 +138,6 @@ class ContentSwitch:
         
         if not self.sequence_manager or not self.serial_connection:  
             self._create_sequence_unavailable_placeholder()
-            print(self.sequence_manager)
             return
             
         if self.sequence_recorder_widget is None:
@@ -188,26 +198,10 @@ class ContentSwitch:
 
     
     def _stream_loop_wrapper(self):
-
         self._local_stream_loop(self.ax, self.scatter_dict, self.canvas_obj, lambda: self.streaming_active)
 
     
     def _local_stream_loop(self, ax, scatter_dict, canvas_obj, is_active_callback):
-        
-        #from gui.pose_tracker import init_3d_plot
-        from gui.pose_tracker import draw_selected_dots
-        from gui.pose_tracker import update_3d_plot
-        from gui.pose_tracker import calculate_left_shoulder_servo_1, calculate_left_shoulder_servo_2, calculate_left_shoulder_servo_3
-        from gui.pose_tracker import calculate_left_elbow_servo_1, calculate_left_elbow_servo_2
-        from gui.pose_tracker import left_hand_servo_thumb, left_hand_servo_index, left_hand_servo_middle, left_hand_servo_ring, left_hand_servo_pinky   
-        from gui.pose_tracker import get_selected_coords_for_3d_plot
-        from gui.pose_tracker import draw_selected_dots
-        
-        import cv2
-        import mediapipe as mp
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import concurrent.futures
         
         # Init MediaPipe modules
         mp_drawing = mp.solutions.drawing_utils
@@ -218,8 +212,8 @@ class ContentSwitch:
         
         with mp_holistic.Holistic(
             model_complexity=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.7
+            min_detection_confidence=0.9,
+            min_tracking_confidence=0.9
         ) as holistic:       
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -358,7 +352,6 @@ class ContentSwitch:
                         ]))
 
                         self.update_servo_log("---------------------------------------------------------------------------------------------")  # blank line before shoulder
-                        
 
                         last_print_time = current_time
                 
@@ -380,48 +373,44 @@ class ContentSwitch:
     #create placeholder content
     # Visualisation for Pose Estimation throught the box plot
     def _create_visualisation_content(self):       
+        # Create a container to hold both the plot and the log
+        visualisation_container = ttk.Frame(self.content_container)
+        visualisation_container.pack(expand=True, fill="both")
         
-        from gui.pose_tracker import init_3d_plot
+        self.stream_button = ttk.Button(
+            visualisation_container,
+            text="Start Stream",
+            command=self._toggle_stream
+        )
+        self.stream_button.pack(pady=(5, 5))
         
-        if self.visualisation_widget is None:
-            # Create a container to hold both the plot and the log
-            visualisation_container = ttk.Frame(self.content_container)
-            visualisation_container.pack(expand=True, fill="both")
-            
-            self.stream_button = ttk.Button(
-                visualisation_container,
-                text="Start Stream",
-                command=self._toggle_stream
-            )
-            self.stream_button.pack(pady=(5, 5))
-            
-            # Initialize the 3D plot 
-            plot_frame = ttk.Frame(visualisation_container, height=300)  # Set desired height here
-            plot_frame.pack(side="top", fill="x", pady=(5, 0))
-            plot_frame.pack_propagate(False)  # Prevent resizing to fit children
+        # Initialize the 3D plot 
+        plot_frame = ttk.Frame(visualisation_container, height=300)  # Set desired height here
+        plot_frame.pack(side="top", fill="x", pady=(5, 0))
+        plot_frame.pack_propagate(False)  # Prevent resizing to fit children
 
-            # Initialize the 3D plot inside this fixed-size frame
-            self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(plot_frame)
-            self.canvas_widget.pack(fill="both", expand=True)
-            
-            # Add the servo log text widget underneath the plot
-            self.servo_log_widget = tk.Text(visualisation_container, height=10, state="disabled", wrap="none")
-            self.servo_log_widget.pack(side="bottom", fill="x")
-            
-            # Set visualisation_widget to the full container
-            self.visualisation_widget = visualisation_container
-            
-            # Start the streaming loop in a separate thread
-            self.stream_thread = threading.Thread(
-                target=lambda: self._local_stream_loop(
-                    self.ax,
-                    self.scatter_dict,
-                    self.canvas_obj,
-                    lambda: self.streaming_active
-                ),
-                daemon=True
-            )
-            self.stream_thread.start()
+        # Initialize the 3D plot inside this fixed-size frame
+        self.fig, self.ax, self.scatter_dict, self.canvas_obj, self.canvas_widget = init_3d_plot(plot_frame)
+        self.canvas_widget.pack(fill="both", expand=True)
+        
+        # Add the servo log text widget underneath the plot
+        self.servo_log_widget = tk.Text(visualisation_container, height=10, state="disabled", wrap="none")
+        self.servo_log_widget.pack(side="bottom", fill="x")
+        
+        # Set visualisation_widget to the full container
+        self.visualisation_widget = visualisation_container
+        
+        # Start the streaming loop in a separate thread
+        self.stream_thread = threading.Thread(
+            target=lambda: self._local_stream_loop(
+                self.ax,
+                self.scatter_dict,
+                self.canvas_obj,
+                lambda: self.streaming_active
+            ),
+            daemon=True
+        )
+        self.stream_thread.start()
             
     
     def _create_sequence_unavailable_placeholder(self):
@@ -523,7 +512,7 @@ class ServoControlGUI:
         
         content_frame.columnconfigure(0, weight=0)  #servo controls natural width
         content_frame.columnconfigure(1, weight=1)  #content switcher expands
-        content_frame.rowconfigure(0, weight=1)
+        content_frame.columnconfigure(2, weight=1)  # ensure equal expansion
         
         #servo controls (left)
         self.servo_controls = ServoControlsManager(
@@ -535,16 +524,12 @@ class ServoControlGUI:
         
 
         #content switcher (right) - pass serial connection for facial tracking
-        self.content_switcher = ContentSwitch(
-            content_frame, self.state, self.serial_connection, self._log_message, "cam"
-        )  
-        self.content_switcher.frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        self.content_switcher = ContentSwitch(content_frame, self.state, self.serial_connection, self._log_message, "cam")  
+        self.content_switcher.frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
         
-        
-        """ self.content_switcher_2 = ContentSwitch(
-            content_frame, self.state, self.serial_connection, self._log_message, "cam"
-        )
-        self.content_switcher_2.frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0)) """
+        self.content_switcher_2 = ContentSwitch(content_frame, self.state, self.serial_connection, self._log_message, "recording")
+        self.content_switcher_2.set_sequence_dependencies(self.sequence_manager)
+        self.content_switcher_2.frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         
         #terminal section (bottom)
         self._create_terminal_section(main_frame)
