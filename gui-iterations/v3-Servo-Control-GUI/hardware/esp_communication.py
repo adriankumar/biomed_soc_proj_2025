@@ -221,7 +221,7 @@ class SerialConnection:
                 command += '\n'
             
             self.serial_connection.write(command.encode('utf-8'))
-            # self.log_callback(f"sent: {command.strip()}")
+            self.log_callback(f"sent: {command.strip()}")
             return True
             
         except Exception as e:
