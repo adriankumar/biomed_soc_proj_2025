@@ -584,13 +584,13 @@ class MotionEditor:
             return
         
         self._execute_playback(all_sequences)
-    
-    #execute playback using sp commands with python timing
+
     def _execute_playback(self, sequences):
+        #execute playback using unified bezier interpolation system
         try:
             self._stop_playback()
             
-            #calculate total duration
+            #calculate total duration for animation
             max_duration = 0
             for component_name, points in sequences.items():
                 if points:
@@ -603,62 +603,118 @@ class MotionEditor:
             #start playback animation
             self._start_playback_animation(max_duration)
             
-            #execute timed playback
-            self._execute_timed_playback(sequences, max_duration)
+            #prepare bezier sequences for unified playback
+            bezier_sequences = {}
+            for component_name in sequences.keys():
+                if component_name in self.sequence_data:
+                    bezier_sequences[component_name] = self.sequence_data[component_name]
             
-            if self.log_callback:
-                component_count = len(sequences)
-                self.log_callback(f"started playback: {component_count} components, {max_duration}ms duration")
-        
+            #get servo configurations for unified playback
+            servo_configurations = {}
+            for component_name in bezier_sequences.keys():
+                servo_configurations[component_name] = self._get_servo_config(component_name)
+            
+            #execute using unified playback system
+            from core.bezier_interpolation import execute_unified_playback
+            success, message = execute_unified_playback(
+                gui_widget=self.window,
+                serial_connection=self.serial_connection,
+                bezier_sequences=bezier_sequences,
+                servo_configurations=servo_configurations,
+                completion_callback=self._on_unified_playback_complete,
+                log_callback=self.log_callback
+            )
+            
+            if not success:
+                self._stop_playback()
+                if self.log_callback:
+                    self.log_callback(f"unified playback failed: {message}")
+            
         except Exception as e:
-            messagebox.showerror("playback error", f"failed to start playback: {str(e)}")
+            if self.log_callback:
+                self.log_callback(f"playback error: {str(e)}")
             self._stop_playback()
+
+    def _on_unified_playback_complete(self, success, error_msg=None):
+        #handle completion from unified playback system
+        self._stop_playback()
+        if not success and error_msg and self.log_callback:
+            self.log_callback(f"playback error: {error_msg}")
+    
+    #execute playback using sp commands with python timing
+    # def _execute_playback(self, sequences):
+    #     try:
+    #         self._stop_playback()
+            
+    #         #calculate total duration
+    #         max_duration = 0
+    #         for component_name, points in sequences.items():
+    #             if points:
+    #                 duration = max(point[0] for point in points)
+    #                 max_duration = max(max_duration, duration)
+            
+    #         if max_duration <= 0:
+    #             return
+            
+    #         #start playback animation
+    #         self._start_playback_animation(max_duration)
+            
+    #         #execute timed playback
+    #         self._execute_timed_playback(sequences, max_duration)
+            
+    #         if self.log_callback:
+    #             component_count = len(sequences)
+    #             self.log_callback(f"started playback: {component_count} components, {max_duration}ms duration")
+        
+    #     except Exception as e:
+    #         messagebox.showerror("playback error", f"failed to start playback: {str(e)}")
+    #         self._stop_playback()
     
     #execute timed playback using sp commands
-    def _execute_timed_playback(self, sequences, total_duration):
-        start_time = time.time()
+    # def _execute_timed_playback(self, sequences, total_duration):
+    #     start_time = time.time()
         
-        #create command timeline
-        command_timeline = []
-        for component_name, points in sequences.items():
-            config = self._get_servo_config(component_name)
-            servo_index = config['index']
+    #     #create command timeline
+    #     command_timeline = []
+    #     for component_name, points in sequences.items():
+    #         config = self._get_servo_config(component_name)
+    #         servo_index = config['index']
             
-            for point_time, angle in points:
-                command_timeline.append((point_time, f"SP:{servo_index}:{angle}"))
+    #         for point_time, angle in points:
+    #             command_timeline.append((point_time, f"SP:{servo_index}:{angle}"))
         
-        #sort by time
-        command_timeline.sort(key=lambda x: x[0])
+    #     #sort by time
+    #     command_timeline.sort(key=lambda x: x[0])
         
-        #schedule command execution
-        self._schedule_commands(command_timeline, start_time)
+    #     #schedule command execution
+    #     self._schedule_commands(command_timeline, start_time)
     
-    #schedule command execution with precise timing
-    def _schedule_commands(self, command_timeline, start_time):
-        if not command_timeline or not self.playback_active:
-            return
+    # #schedule command execution with precise timing
+    # def _schedule_commands(self, command_timeline, start_time):
+    #     if not command_timeline or not self.playback_active:
+    #         return
         
-        current_time = time.time()
-        elapsed_ms = (current_time - start_time) * 1000
+    #     current_time = time.time()
+    #     elapsed_ms = (current_time - start_time) * 1000
         
-        #find commands to execute now
-        commands_to_execute = []
-        remaining_commands = []
+    #     #find commands to execute now
+    #     commands_to_execute = []
+    #     remaining_commands = []
         
-        for cmd_time, command in command_timeline:
-            if cmd_time <= elapsed_ms + 50:  #50ms tolerance
-                commands_to_execute.append(command)
-            else:
-                remaining_commands.append((cmd_time, command))
+    #     for cmd_time, command in command_timeline:
+    #         if cmd_time <= elapsed_ms + 50:  #50ms tolerance
+    #             commands_to_execute.append(command)
+    #         else:
+    #             remaining_commands.append((cmd_time, command))
         
-        #execute commands
-        for command in commands_to_execute:
-            if self.serial_connection and self.serial_connection.is_connected:
-                self.serial_connection.send_command(command)
+    #     #execute commands
+    #     for command in commands_to_execute:
+    #         if self.serial_connection and self.serial_connection.is_connected:
+    #             self.serial_connection.send_command(command)
         
-        #schedule next batch
-        if remaining_commands and self.playback_active:
-            self.window.after(20, lambda: self._schedule_commands(remaining_commands, start_time))
+    #     #schedule next batch
+    #     if remaining_commands and self.playback_active:
+    #         self.window.after(20, lambda: self._schedule_commands(remaining_commands, start_time))
     
     #start playback animation
     def _start_playback_animation(self, duration_ms):

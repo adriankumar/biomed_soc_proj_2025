@@ -12,15 +12,20 @@ from core.validation import (
 from core.event_system import publish, Events
 from core.bezier_interpolation import (
     ensure_control_points, generate_playback_points, create_smooth_bezier_from_points,
-    validate_bezier_keyframes
+    validate_bezier_keyframes, get_unique_timestamps, calculate_total_duration_ms,
+    get_sequence_display_info, find_keyframes_at_timestamp, remove_keyframes_at_timestamp,
+    edit_keyframe_delay_at_timestamp, create_command_timeline_from_bezier,
+    get_keyframe_count_from_bezier, get_sequence_components_from_bezier, 
+    validate_bezier_sequence_integrity, insert_keyframes_into_bezier_sequences, 
+    get_servo_commands_at_timestamp, create_unified_playback_executor
 )
 from gui.motion_editor import MotionEditor
 
 class SequenceManager:
-    #manages sequence data using unified bezier format for both recording and motion editing
+    #manages sequence data using unified bezier format with preserved user delay intentions
     def __init__(self, state_manager):
         self.state = state_manager
-        #unified bezier format as primary storage - no more dual formats
+        #unified bezier format as primary storage
         self.sequence_data = {
             "metadata": {
                 "max_duration": MAX_SEQUENCE_DURATION,
@@ -32,8 +37,9 @@ class SequenceManager:
         }
         self.gui_callbacks = []
         
-        #recording state for time tracking
+        #recording state with preserved user intentions
         self.next_recording_time = 0.0
+        self.pending_recording_delay = DEFAULT_KEYFRAME_DELAY  #preserves user delay input
     
     #add gui callback for updates
     def add_gui_callback(self, callback):
@@ -56,7 +62,18 @@ class SequenceManager:
         
         publish(event_type, *args)
     
-    #record keyframe directly in bezier format with automatic smooth curve generation
+    #set delay for next recording without affecting existing keyframes
+    def set_next_recording_delay(self, delay_seconds):
+        if MIN_KEYFRAME_INTERVAL <= delay_seconds <= MAX_KEYFRAME_DELAY:
+            self.pending_recording_delay = delay_seconds
+            return True
+        return False
+    
+    #get current pending delay for ui display
+    def get_next_recording_delay(self):
+        return self.pending_recording_delay
+    
+    #record keyframe with preserved user delay intentions
     def record_keyframe(self, delay_to_next):
         component_positions = self.state.get_current_component_positions()
         
@@ -72,164 +89,112 @@ class SequenceManager:
         
         current_time_ms = round(self.next_recording_time * 1000)
         
-        #create bezier keyframes for each component
-        for component_name, pulse_width in component_positions.items():
-            if component_name not in self.sequence_data["servo_sequences"]:
-                self.sequence_data["servo_sequences"][component_name] = []
-            
-            component_sequence = self.sequence_data["servo_sequences"][component_name]
-            
-            #create bezier keyframe
-            bezier_keyframe = {
-                "time": current_time_ms,
-                "angle": pulse_width,
-                "cp_in": None,
-                "cp_out": None
-            }
-            
-            component_sequence.append(bezier_keyframe)
+        #insert keyframes using unified function
+        insert_keyframes_into_bezier_sequences(self.sequence_data["servo_sequences"], current_time_ms, component_positions)
         
-        #update recording time for next keyframe
+        #update recording time preserving user delay intentions
+        self.pending_recording_delay = delay_to_next
         self.next_recording_time += delay_to_next
         
-        #ensure smooth bezier curves for all component sequences
-        for component_name in self.sequence_data["servo_sequences"]:
-            ensure_control_points(self.sequence_data["servo_sequences"][component_name], use_smooth_defaults=True)
-        
-        #update metadata
-        self._update_metadata()
+        #update metadata without destroying delay intentions
+        self._update_metadata_preserve_delay()
         
         if self.sequence_data["metadata"]["creation_timestamp"] is None:
             self.sequence_data["metadata"]["creation_timestamp"] = time.time()
         
-        self._notify_gui(Events.SEQUENCE_KEYFRAME_ADDED, self._get_total_keyframe_count() - 1)
+        self._notify_gui(Events.SEQUENCE_KEYFRAME_ADDED, self.get_keyframe_count() - 1)
         return True, "keyframe recorded successfully"
     
-    #update sequence metadata from current bezier data
-   
-    def _update_metadata(self):
-        total_keyframes = 0
-        component_count = len(self.sequence_data["servo_sequences"])
-        
-        for component_sequence in self.sequence_data["servo_sequences"].values():
-            total_keyframes += len(component_sequence)
+    #update sequence metadata preserving user delay intentions
+    def _update_metadata_preserve_delay(self):
+        #use unified utility functions
+        total_keyframes = get_keyframe_count_from_bezier(self.sequence_data["servo_sequences"])
+        component_count = len(get_sequence_components_from_bezier(self.sequence_data["servo_sequences"]))
         
         self.sequence_data["metadata"]["total_keyframes"] = total_keyframes
         self.sequence_data["metadata"]["component_count"] = component_count
         
-        #update next recording time to end of sequence plus default delay
-        self.next_recording_time = self.get_total_duration() + DEFAULT_KEYFRAME_DELAY
+        #preserve user delay intentions instead of resetting to defaults
+        #next_recording_time is already set correctly in record_keyframe()
     
-    #get total keyframe count across all components
-    def _get_total_keyframe_count(self):
-        total = 0
-        for component_sequence in self.sequence_data["servo_sequences"].values():
-            total += len(component_sequence)
-        return total
+    #remove keyframe by timestamp with unified bezier operations
+    def remove_keyframe_by_timestamp(self, timestamp_ms):
+        removed_components = remove_keyframes_at_timestamp(self.sequence_data["servo_sequences"], timestamp_ms)
+        
+        if not removed_components:
+            return False, "no keyframes found at timestamp"
+        
+        #validate remaining sequences still have minimum keyframes
+        invalid_components = []
+        for component_name, component_sequence in self.sequence_data["servo_sequences"].items():
+            if len(component_sequence) < 2:
+                invalid_components.append(component_name)
+        
+        if invalid_components:
+            return False, f"removal would leave insufficient keyframes in: {', '.join(invalid_components)}"
+        
+        self._update_metadata_preserve_delay()
+        self._notify_gui(Events.SEQUENCE_KEYFRAME_REMOVED, timestamp_ms)
+        return True, f"removed keyframes from {len(removed_components)} components"
     
-    #remove keyframe by component and index with bezier curve regeneration
-    def remove_keyframe(self, component_name, keyframe_index):
-        if component_name not in self.sequence_data["servo_sequences"]:
-            return False, "component not found in sequence"
+    #edit keyframe delay using unified timestamp approach
+    def edit_keyframe_delay_by_timestamp(self, timestamp_ms, new_delay_seconds):
+        if not (MIN_KEYFRAME_INTERVAL <= new_delay_seconds <= MAX_KEYFRAME_DELAY):
+            return False, f"delay must be between {MIN_KEYFRAME_INTERVAL} and {MAX_KEYFRAME_DELAY}"
         
-        component_sequence = self.sequence_data["servo_sequences"][component_name]
+        new_delay_ms = round(new_delay_seconds * 1000)
+        success, message = edit_keyframe_delay_at_timestamp(self.sequence_data["servo_sequences"], timestamp_ms, new_delay_ms)
         
-        if keyframe_index < 0 or keyframe_index >= len(component_sequence):
-            return False, "invalid keyframe index"
+        if success:
+            #validate total duration constraint
+            new_total_duration = calculate_total_duration_ms(self.sequence_data["servo_sequences"]) / 1000.0
+            if new_total_duration > MAX_SEQUENCE_DURATION:
+                return False, f"total duration would exceed {MAX_SEQUENCE_DURATION} seconds"
+            
+            self._update_metadata_preserve_delay()
+            self._notify_gui(Events.SEQUENCE_UPDATED)
         
-        if len(component_sequence) <= 2:
-            return False, "cannot remove keyframe - minimum of 2 required per component"
-        
-        component_sequence.pop(keyframe_index)
-        
-        #regenerate smooth control points
-        ensure_control_points(component_sequence, use_smooth_defaults=True)
-        
-        self._update_metadata()
-        self._notify_gui(Events.SEQUENCE_KEYFRAME_REMOVED, keyframe_index)
-        return True, "keyframe removed successfully"
+        return success, message
     
-    #clear entire sequence and reset recording state
+    #clear entire sequence and reset recording state preserving delay
     def clear_sequence(self):
         self.sequence_data["servo_sequences"].clear()
         self.sequence_data["metadata"]["total_keyframes"] = 0
         self.sequence_data["metadata"]["creation_timestamp"] = None
         self.sequence_data["metadata"]["component_count"] = 0
         self.next_recording_time = 0.0
+        #preserve pending delay across sequence clears
         
         self._notify_gui(Events.SEQUENCE_CLEARED)
         return True, "sequence cleared successfully"
     
-    #get bezier sequence data directly for motion editor (no conversion needed)
+    #get bezier sequence data directly for motion editor
     def get_sequence_data(self):
         return copy.deepcopy(self.sequence_data["servo_sequences"])
     
-    #update sequence data from motion editor (direct replacement)
+    #update sequence data from motion editor
     def update_sequence_data(self, updated_bezier_sequences):
         if not isinstance(updated_bezier_sequences, dict):
             return False, "invalid sequence data format"
         
         try:
-            #validate all component sequences
-            for component_name, keyframes in updated_bezier_sequences.items():
-                if component_name in self.state.servo_configurations:
-                    servo_config = self.state.get_component_config(component_name)
-                    is_valid, error_msg = validate_bezier_keyframes(keyframes, servo_config)
-                    if not is_valid:
-                        return False, f"{component_name}: {error_msg}"
+            #validate using unified function
+            issues = validate_bezier_sequence_integrity(updated_bezier_sequences, self.state.servo_configurations)
+            if issues:
+                return False, "; ".join(issues)
             
             #replace sequence data directly
             self.sequence_data["servo_sequences"] = copy.deepcopy(updated_bezier_sequences)
-            self._update_metadata()
+            self._update_metadata_preserve_delay()
             self._notify_gui(Events.SEQUENCE_UPDATED)
             return True, "sequence updated successfully"
             
         except Exception as e:
             return False, f"failed to update sequence: {str(e)}"
     
-    #get keyframes in time-based format for display compatibility (conversion for ui only)
-    def get_keyframes(self):
-        #generate time-based representation for display purposes only
-        time_based_keyframes = []
-        
-        if not self.sequence_data["servo_sequences"]:
-            return time_based_keyframes
-        
-        #collect all unique timestamps
-        all_times = set()
-        for component_sequence in self.sequence_data["servo_sequences"].values():
-            for kf in component_sequence:
-                all_times.add(kf["time"])
-        
-        sorted_times = sorted(list(all_times))
-        
-        #create time-based keyframes for display
-        for i, time_ms in enumerate(sorted_times):
-            delay_to_next = (sorted_times[i+1] - time_ms) / 1000.0 if i < len(sorted_times) - 1 else 1.0
-            
-            keyframe = {
-                "absolute_time": time_ms / 1000.0,
-                "delay_to_next": delay_to_next,
-                "component_positions": {}
-            }
-            
-            #collect component positions at this time
-            for component_name, component_sequence in self.sequence_data["servo_sequences"].items():
-                for kf in component_sequence:
-                    if kf["time"] == time_ms:
-                        keyframe["component_positions"][component_name] = kf["angle"]
-                        break
-            
-            time_based_keyframes.append(keyframe)
-        
-        return time_based_keyframes
-    
-    #get keyframe by display index (for ui compatibility)
-    def get_keyframe(self, index):
-        keyframes = self.get_keyframes()
-        if 0 <= index < len(keyframes):
-            return keyframes[index].copy()
-        return None
+    #get display info for ui using unified function
+    def get_display_keyframes(self):
+        return get_sequence_display_info(self.sequence_data["servo_sequences"])
     
     #check if any sequences have keyframes
     def has_keyframes(self):
@@ -237,59 +202,21 @@ class SequenceManager:
             len(seq) > 0 for seq in self.sequence_data["servo_sequences"].values()
         )
     
-    #get total keyframe count for display
+    #get keyframe count using unified function
     def get_keyframe_count(self):
-        return len(self.get_keyframes())  #display count, not total bezier keyframes
+        return get_keyframe_count_from_bezier(self.sequence_data["servo_sequences"])
     
-    #get total sequence duration from bezier data
+    #get total sequence duration using unified function
     def get_total_duration(self):
-        if not self.sequence_data["servo_sequences"]:
-            return 0.0
-        
-        max_time = 0
-        for component_sequence in self.sequence_data["servo_sequences"].values():
-            if component_sequence:
-                component_max = max(kf["time"] for kf in component_sequence)
-                max_time = max(max_time, component_max)
-        
-        return max_time / 1000.0  #convert to seconds
+        return calculate_total_duration_ms(self.sequence_data["servo_sequences"]) / 1000.0
     
-    #get all components that have sequences
+    #get sequence components using unified function
     def get_sequence_components(self):
-        return sorted(list(self.sequence_data["servo_sequences"].keys()))
+        return get_sequence_components_from_bezier(self.sequence_data["servo_sequences"])
     
-    #resolve keyframe to servo commands using bezier interpolation
-    def resolve_keyframe_to_commands(self, keyframe):
-        if "component_positions" not in keyframe:
-            return [], []
-        
-        commands = []
-        missing_components = []
-        
-        for component_name, pulse_width in keyframe["component_positions"].items():
-            if component_name in self.state.servo_configurations:
-                servo_index = self.state.servo_configurations[component_name]["index"]
-                commands.append(f"SP:{servo_index}:{pulse_width}")
-            else:
-                missing_components.append(component_name)
-        
-        return commands, missing_components
-    
-    #validate sequence integrity
+    #validate sequence integrity using unified function
     def validate_sequence_integrity(self):
-        issues = []
-        
-        for component_name, component_sequence in self.sequence_data["servo_sequences"].items():
-            if component_name not in self.state.servo_configurations:
-                issues.append(f"component '{component_name}' no longer exists")
-                continue
-            
-            servo_config = self.state.get_component_config(component_name)
-            is_valid, error_msg = validate_bezier_keyframes(component_sequence, servo_config)
-            if not is_valid:
-                issues.append(f"component '{component_name}': {error_msg}")
-        
-        return issues
+        return validate_bezier_sequence_integrity(self.sequence_data["servo_sequences"], self.state.servo_configurations)
     
     #save sequence in bezier format for curve preservation
     def save_sequence(self, file_path=None):
@@ -340,8 +267,8 @@ class SequenceManager:
         except Exception as e:
             return False, f"error saving sequence: {str(e)}"
     
-    #load sequence from bezier or legacy formats
-    def load_sequence(self, file_path=None, next_delay=DEFAULT_KEYFRAME_DELAY):
+    #load sequence from bezier or legacy formats preserving delay
+    def load_sequence(self, file_path=None, next_delay=None):
         if file_path is None:
             file_path = filedialog.askopenfilename(
                 title="load sequence",
@@ -366,12 +293,16 @@ class SequenceManager:
                 if "metadata" in loaded_data:
                     self.sequence_data["metadata"].update(loaded_data["metadata"])
                 
-                #reset recording time to end of loaded sequence
-                self.next_recording_time = self.get_total_duration() + next_delay
+                #reset recording time to end of loaded sequence preserving user delay
+                self.next_recording_time = self.get_total_duration()
+                if next_delay is not None:
+                    self.pending_recording_delay = next_delay
                 
             #handle legacy time-based format (convert to bezier)
             elif "keyframes" in loaded_data and "metadata" in loaded_data:
                 self._convert_legacy_format(loaded_data)
+                if next_delay is not None:
+                    self.pending_recording_delay = next_delay
                 
             #handle legacy motion-centric format (direct use)
             elif "servo_sequences" in loaded_data:
@@ -382,11 +313,13 @@ class SequenceManager:
                     ensure_control_points(self.sequence_data["servo_sequences"][component_name], use_smooth_defaults=True)
                 
                 self.next_recording_time = self.get_total_duration()
+                if next_delay is not None:
+                    self.pending_recording_delay = next_delay
                 
             else:
                 return False, "invalid sequence file format"
             
-            self._update_metadata()
+            self._update_metadata_preserve_delay()
             self._notify_gui(Events.SEQUENCE_LOADED)
             return True, f"sequence loaded from {file_path}"
             
@@ -400,100 +333,34 @@ class SequenceManager:
         #extract component sequences from time-based keyframes
         for keyframe in legacy_data["keyframes"]:
             time_ms = round(keyframe["absolute_time"] * 1000)
+            component_positions = keyframe["component_positions"]
             
-            for component_name, pulse_width in keyframe["component_positions"].items():
-                if component_name not in self.sequence_data["servo_sequences"]:
-                    self.sequence_data["servo_sequences"][component_name] = []
-                
-                bezier_keyframe = {
-                    "time": time_ms,
-                    "angle": pulse_width,
-                    "cp_in": None,
-                    "cp_out": None
-                }
-                
-                self.sequence_data["servo_sequences"][component_name].append(bezier_keyframe)
-        
-        #generate smooth control points for all sequences
-        for component_name in self.sequence_data["servo_sequences"]:
-            ensure_control_points(self.sequence_data["servo_sequences"][component_name], use_smooth_defaults=True)
+            #use unified insertion function
+            insert_keyframes_into_bezier_sequences(self.sequence_data["servo_sequences"], time_ms, component_positions)
         
         self.next_recording_time = self.get_total_duration()
 
-    #edit delay of specific keyframe with validation and cascade updates
-    def edit_keyframe_delay(self, display_index, new_delay):
-        if not (MIN_KEYFRAME_INTERVAL <= new_delay <= MAX_KEYFRAME_DELAY):
-            return False, f"delay must be between {MIN_KEYFRAME_INTERVAL} and {MAX_KEYFRAME_DELAY}"
-        
-        keyframes = self.get_keyframes()
-        if display_index >= len(keyframes) - 1:
-            return False, "cannot edit delay of last keyframe"
-        
-        #calculate duration impact
-        current_delay = keyframes[display_index]["delay_to_next"]
-        time_change = new_delay - current_delay
-        new_total_duration = self.get_total_duration() + time_change
-        
-        if new_total_duration > MAX_SEQUENCE_DURATION:
-            return False, f"total duration would exceed {MAX_SEQUENCE_DURATION} seconds"
-        
-        #perform atomic timestamp rebuild
-        success = self._rebuild_timestamps_from_display_index(display_index, new_delay)
-        if success:
-            self._update_metadata()
-            self._notify_gui(Events.SEQUENCE_UPDATED)
-            return True, "delay updated successfully"
-        
-        return False, "failed to update timestamps"
-
-    #rebuild all component timestamps after delay change with cascade effect
-    def _rebuild_timestamps_from_display_index(self, display_index, new_delay):
-        keyframes = self.get_keyframes()
-        current_delay = keyframes[display_index]["delay_to_next"]
-        time_shift_ms = round((new_delay - current_delay) * 1000)
-        
-        #identify cascade boundary timestamp
-        cascade_start_time = round(keyframes[display_index + 1]["absolute_time"] * 1000)
-        
-        #apply timestamp shift to all affected keyframes across all components
-        for component_name, bezier_keyframes in self.sequence_data["servo_sequences"].items():
-            for keyframe in bezier_keyframes:
-                if keyframe["time"] >= cascade_start_time:
-                    keyframe["time"] += time_shift_ms
-        
-        #regenerate bezier control points for smooth curves
-        for component_name in self.sequence_data["servo_sequences"]:
-            ensure_control_points(self.sequence_data["servo_sequences"][component_name], use_smooth_defaults=True)
-        
-        return True
-
 
 class PlaybackManager:
-    #manages sequence playback using unified bezier interpolation
-    def __init__(self, sequence_manager, serial_connection, log_callback):
+    #manages sequence playback using unified bezier interpolation system
+    def __init__(self, sequence_manager, serial_connection, gui_widget, log_callback):
         self.sequence_manager = sequence_manager
         self.serial_connection = serial_connection
+        self.gui_widget = gui_widget  #gui context for reliable timing
         self.log_callback = log_callback
         
-        self.is_playing_flag = False
-        self.playback_thread = None
-        self.stop_requested = False
+        #unified playback executor for precise timing
+        self.playback_executor = create_unified_playback_executor(
+            gui_widget, serial_connection, log_callback
+        )
     
-    #check playback status
+    #check playback status using unified system
     def is_playing(self):
-        return self.is_playing_flag
-
-    def _notify_completion(self, success=True, error_msg=None):
-        if hasattr(self, 'completion_callback') and self.completion_callback:
-            try:
-                self.completion_callback(success, error_msg)
-            except Exception as e:
-                if self.log_callback:
-                    self.log_callback(f"completion callback error: {str(e)}")
+        return self.playback_executor.playback_active
     
-    #start sequence playback using bezier interpolation
+    #start sequence playback using unified executor
     def start_playback(self, completion_callback):
-        if self.is_playing_flag:
+        if self.is_playing():
             return False, "playback already in progress"
         
         if not self.sequence_manager.has_keyframes():
@@ -502,124 +369,38 @@ class PlaybackManager:
         if not self.serial_connection.is_connected:
             return False, "serial connection required"
         
-        self.stop_requested = False
-        self.completion_callback = completion_callback
-        self.playback_thread = threading.Thread(target=self._playback_thread, daemon=True)
-        self.playback_thread.start()
-        
-        return True, "playback started"
-    
-    #stop sequence playback
-    def stop_playback(self):
-        if self.is_playing_flag:
-            self.stop_requested = True
-            
-            if self.playback_thread and self.playback_thread.is_alive():
-                self.playback_thread.join(timeout=1.0)
-        
-        self._reset_playback_state()
-    
-    #reset playback state
-    def _reset_playback_state(self, success=True, error_msg=None):
-        self.is_playing_flag = False
-        self.stop_requested = False
-        self.playback_thread = None
-        self._notify_completion(success, error_msg)
-    
-    #notify gui of events
-    def _notify_gui(self, event_type, *args):
-        if self.gui_callback:
-            try:
-                self.gui_callback(event_type, *args)
-            except Exception as e:
-                if self.log_callback:
-                    self.log_callback(f"gui callback error: {str(e)}")
-    
-    #main playback thread using bezier interpolation
-    def _playback_thread(self):
-        try:
-            self.is_playing_flag = True
-            
-            total_duration = self.sequence_manager.get_total_duration()
-            
-            if self.log_callback:
-                components_used = self.sequence_manager.get_sequence_components()
-                self.log_callback(f"starting bezier playback: {len(components_used)} components, {total_duration:.1f}s duration")
-            
-            self._execute_bezier_playback(total_duration)
-            
-            if self.log_callback:
-                self.log_callback("bezier sequence playback completed")
-            
-            self._reset_playback_state(success=True)
-                
-        except Exception as e:
-            error_msg = f"playback error: {str(e)}"
-            if self.log_callback:
-                self.log_callback(error_msg)
-            self._reset_playback_state(success=False, error_msg=error_msg)
-    
-    #execute sequence using unified bezier interpolation
-    def _execute_bezier_playback(self, total_duration):
-        #generate interpolated command timeline for all components
-        command_timeline = []
-        
+        #get bezier sequences and servo configurations
         bezier_sequences = self.sequence_manager.get_sequence_data()
+        servo_configurations = {}
         
-        for component_name, component_sequence in bezier_sequences.items():
-            if component_name in self.sequence_manager.state.servo_configurations:
-                servo_config = self.sequence_manager.state.get_component_config(component_name)
-                servo_index = servo_config["index"]
-                
-                #generate playback points using shared bezier interpolation
-                playback_points = generate_playback_points(component_sequence, servo_config, time_step=50)
-                
-                for time_ms, angle in playback_points:
-                    command_timeline.append((time_ms, f"SP:{servo_index}:{angle}"))
+        #build servo configuration mapping
+        for component_name in bezier_sequences.keys():
+            config = self.sequence_manager.state.get_component_config(component_name)
+            if config:
+                servo_configurations[component_name] = {
+                    'index': config['index'],
+                    'pulse_min': config['pulse_min'],
+                    'pulse_max': config['pulse_max']
+                }
         
-        #sort commands by time
-        command_timeline.sort(key=lambda x: x[0])
-        
-        #execute timed playback
-        playback_start_time = time.time()
-        
-        for cmd_time_ms, command in command_timeline:
-            if self.stop_requested:
-                break
-            
-            #wait for correct timing
-            target_time = playback_start_time + (cmd_time_ms / 1000.0)
-            current_time = time.time()
-            
-            if current_time < target_time:
-                time.sleep(target_time - current_time)
-            
-            #send command
-            if self.serial_connection.is_connected:
-                self.serial_connection.send_command(command)
-            
-            #small delay to prevent command flooding
-            time.sleep(PLAYBACK_COMMAND_INTERVAL)
+        #execute using unified playback system
+        return self.playback_executor.execute_playback(
+            bezier_sequences, servo_configurations, completion_callback
+        )
     
-    #preview keyframe commands (for display compatibility)
-    def preview_keyframe_commands(self, keyframe_index):
-        keyframes = self.sequence_manager.get_keyframes()
-        
-        if not (0 <= keyframe_index < len(keyframes)):
-            return [], ["invalid keyframe index"]
-        
-        keyframe = keyframes[keyframe_index]
-        return self.sequence_manager.resolve_keyframe_to_commands(keyframe)
+    #stop sequence playback using unified system
+    def stop_playback(self):
+        self.playback_executor.stop_playback()
 
 
 class TimelineVisualiser:
-    #timeline visualisation for sequence display using bezier data
+    #timeline visualisation for sequence display using unified bezier data
     def __init__(self, parent, max_duration=120.0, height=40):
         self.frame = ttk.Frame(parent)
         self.max_duration = max_duration
         self.height = height
         
-        self.keyframes = []
+        self.display_keyframes = []  #converted for display only
         self.total_duration = 0.0
         self.is_animating = False
         self.animation_start_time = 0.0
@@ -639,10 +420,11 @@ class TimelineVisualiser:
     def _on_canvas_resize(self, event):
         self._draw_timeline()
     
-    #update sequence data for visualisation
-    def update_sequence(self, keyframes, total_duration):
-        self.keyframes = keyframes.copy() if keyframes else []
-        self.total_duration = total_duration
+    #update sequence data from bezier sequences for visualisation
+    def update_bezier_sequence(self, bezier_sequences):
+        #convert to display format for rendering only
+        self.display_keyframes = get_sequence_display_info(bezier_sequences)
+        self.total_duration = calculate_total_duration_ms(bezier_sequences) / 1000.0
         self._draw_timeline()
     
     #draw complete timeline
@@ -701,7 +483,7 @@ class TimelineVisualiser:
     
     #draw keyframe indicators
     def _draw_keyframes(self, width, height):
-        if not self.keyframes or self.max_duration <= 0:
+        if not self.display_keyframes or self.max_duration <= 0:
             return
         
         track_y = height // 2
@@ -710,7 +492,7 @@ class TimelineVisualiser:
         
         colours = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#F44336", "#607D8B"]
         
-        for i, keyframe in enumerate(self.keyframes):
+        for i, keyframe in enumerate(self.display_keyframes):
             start_time = keyframe["absolute_time"]
             duration = keyframe["delay_to_next"]
             
@@ -786,21 +568,23 @@ class TimelineVisualiser:
 
 
 class SequenceRecorderWidget:
-    #sequence recording interface with unified bezier integration
+    #sequence recording interface with unified bezier integration and preserved delay control
     def __init__(self, parent, sequence_manager, serial_connection, log_callback):
         self.frame = ttk.LabelFrame(parent, text="sequence recording")
         self.sequence_manager = sequence_manager
         self.serial_connection = serial_connection
         self.log_callback = log_callback
         
-        #gui variables
-        self.delay_var = tk.DoubleVar(value=DEFAULT_KEYFRAME_DELAY)
+        #gui variables with delay synchronisation
+        self.delay_var = tk.DoubleVar(value=sequence_manager.get_next_recording_delay())
         self.selected_step_index = None
+        self.selected_timestamp_ms = None  #unified timestamp-based selection
         
-        #playback manager using simplified callback system
+        #playback manager using unified system with gui context
         self.playback_manager = PlaybackManager(
             sequence_manager=sequence_manager,
             serial_connection=serial_connection,
+            gui_widget=self.frame,  #provides gui context for reliable timing
             log_callback=log_callback
         )
         
@@ -812,12 +596,12 @@ class SequenceRecorderWidget:
         #register gui callback for updates
         self.sequence_manager.add_gui_callback(self._on_sequence_event)
     
-    #create recording interface
+    #create recording interface with delay synchronisation
     def _create_ui(self):
         main_frame = ttk.Frame(self.frame)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
-        #delay control
+        #delay control with live updates
         delay_frame = ttk.Frame(main_frame)
         delay_frame.pack(fill="x", pady=5)
         
@@ -825,6 +609,9 @@ class SequenceRecorderWidget:
         
         self.delay_spinbox = ttk.Spinbox(delay_frame, from_=MIN_KEYFRAME_INTERVAL, to=MAX_KEYFRAME_DELAY, increment=0.1, textvariable=self.delay_var, width=8, format="%.1f")
         self.delay_spinbox.pack(side="left", padx=5)
+        
+        #bind delay changes for immediate synchronisation
+        self.delay_var.trace_add("write", self._on_delay_changed)
         
         #control buttons
         control_frame = ttk.Frame(main_frame)
@@ -852,7 +639,7 @@ class SequenceRecorderWidget:
         self.load_button = ttk.Button(file_frame, text="load sequence", command=self._load_sequence)
         self.load_button.pack(side="left", padx=5)
         
-        #motion editor integration - simplified without format conversion
+        #motion editor integration using unified bezier format
         self.motion_editor_button = ttk.Button(file_frame, text="edit motion curves", command=self._launch_motion_editor, state="disabled")
         self.motion_editor_button.pack(side="left", padx=5)
         
@@ -889,7 +676,7 @@ class SequenceRecorderWidget:
         
         self.step_tree.bind("<<TreeviewSelect>>", self._on_step_selected)
         
-        #step management with edit delay functionality
+        #step management with unified timestamp editing
         step_frame = ttk.Frame(main_frame)
         step_frame.pack(fill="x", pady=5)
         
@@ -905,7 +692,15 @@ class SequenceRecorderWidget:
         #force initial update
         self._update_all_displays()
     
-    #launch motion editor with simplified integration (no format conversion needed)
+    #handle delay input changes with immediate synchronisation
+    def _on_delay_changed(self, *args):
+        try:
+            new_delay = self.delay_var.get()
+            self.sequence_manager.set_next_recording_delay(new_delay)
+        except tk.TclError:
+            pass
+    
+    #launch motion editor with unified bezier format
     def _launch_motion_editor(self):
         if not self.sequence_manager.has_keyframes():
             messagebox.showinfo("no sequence", "no sequence data to edit")
@@ -919,17 +714,17 @@ class SequenceRecorderWidget:
                 pass
             self.motion_editor_window = None
         
-        #get bezier sequence data directly (no conversion needed)
+        #get bezier sequence data directly
         sequence_data = self.sequence_manager.get_sequence_data()
         
-        #define save callback function for data persistence
+        #unified save callback for data persistence
         def save_callback(updated_data):
             success, message = self.sequence_manager.update_sequence_data(updated_data)
             if success:
-                self._update_all_displays()  #refresh displays immediately
+                self._update_all_displays()
             return success, message
         
-        #create motion editor instance with callback
+        #create motion editor with unified bezier format
         self.motion_editor_window = MotionEditor(
             parent=self.frame,
             sequence_data=sequence_data,
@@ -944,14 +739,14 @@ class SequenceRecorderWidget:
         if self.log_callback:
             self.log_callback("launched motion editor")
     
-    #record new step
+    #record new step with preserved delay intentions
     def _record_step(self):
         delay = self.delay_var.get()
         success, message = self.sequence_manager.record_keyframe(delay)
         
         if success:
             components_used = len(self.sequence_manager.get_sequence_components())
-            self.log_callback(f"recorded bezier step {self.sequence_manager.get_keyframe_count()}: {components_used} components")
+            self.log_callback(f"recorded bezier step {self.sequence_manager.get_keyframe_count()}: {components_used} components, {delay}s delay")
         else:
             messagebox.showerror("recording error", message)
             self.log_callback(f"recording failed: {message}")
@@ -966,11 +761,11 @@ class SequenceRecorderWidget:
             messagebox.showwarning("not connected", "serial connection required for playback")
             return
         
-        #update gui immediately before starting playback
+        #update gui immediately before starting unified playback
         self._update_button_states_for_playing()
         self.timeline_visualiser.start_playback_animation(self.sequence_manager.get_total_duration())
         
-        #start playback with completion callback
+        #start unified playback
         success, message = self.playback_manager.start_playback(self._on_playback_complete)
         if not success:
             #reset gui if playback failed to start
@@ -978,7 +773,7 @@ class SequenceRecorderWidget:
             self.timeline_visualiser.stop_playback_animation()
             messagebox.showerror("playback error", message)
     
-    #stop playback
+    #stop playback using unified system
     def _stop_playback(self):
         self.playback_manager.stop_playback()
     
@@ -1004,7 +799,7 @@ class SequenceRecorderWidget:
         self.delay_spinbox.config(state="disabled")
         self.motion_editor_button.config(state="disabled")
 
-    #clear sequence
+    #clear sequence preserving delay settings
     def _clear_sequence(self):
         if not self.sequence_manager.has_keyframes():
             return
@@ -1024,7 +819,7 @@ class SequenceRecorderWidget:
         elif "no file selected" not in message:
             messagebox.showerror("save error", message)
     
-    #load sequence with unified bezier support
+    #load sequence with unified bezier support preserving delay
     def _load_sequence(self):
         current_delay = self.delay_var.get()
         success, message = self.sequence_manager.load_sequence(next_delay=current_delay)
@@ -1035,72 +830,56 @@ class SequenceRecorderWidget:
         elif "no file selected" not in message:
             messagebox.showerror("load error", message)
     
-    #handle step selection
+    #handle step selection using unified timestamp approach
     def _on_step_selected(self, event):
         selection = self.step_tree.selection()
         if selection:
             self.selected_step_index = self.step_tree.index(selection[0])
+            
+            #extract timestamp for unified operations
+            display_keyframes = self.sequence_manager.get_display_keyframes()
+            if self.selected_step_index < len(display_keyframes):
+                self.selected_timestamp_ms = display_keyframes[self.selected_step_index]["timestamp_ms"]
+            else:
+                self.selected_timestamp_ms = None
         else:
             self.selected_step_index = None
+            self.selected_timestamp_ms = None
+        
         self._update_button_states()
     
-    #remove selected step (simplified without delay editing)
+    #remove selected step using unified timestamp operations
     def _remove_selected_step(self):
-        if self.selected_step_index is None:
+        if self.selected_timestamp_ms is None:
             return
         
-        #get target timestamp from display format
-        keyframes = self.sequence_manager.get_keyframes()
-        if self.selected_step_index >= len(keyframes):
-            return
+        #use unified timestamp removal
+        success, message = self.sequence_manager.remove_keyframe_by_timestamp(self.selected_timestamp_ms)
         
-        target_keyframe = keyframes[self.selected_step_index]
-        target_time_ms = round(target_keyframe["absolute_time"] * 1000)
-        
-        #surgical removal from bezier format across all components
-        components_modified = []
-        components_invalid = []
-        
-        for component_name, component_sequence in self.sequence_manager.sequence_data["servo_sequences"].items():
-            #find and remove keyframes matching target timestamp
-            original_length = len(component_sequence)
-            component_sequence[:] = [kf for kf in component_sequence if kf["time"] != target_time_ms]
-            new_length = len(component_sequence)
-            
-            if new_length != original_length:
-                components_modified.append(component_name)
-                
-                #check if component sequence is still valid (minimum 2 keyframes)
-                if new_length < 2:
-                    components_invalid.append(component_name)
-        
-        #prevent removal if it would invalidate any sequences
-        if components_invalid:
-            messagebox.showwarning("removal blocked", 
-                f"cannot remove step - would leave insufficient keyframes in: {', '.join(components_invalid)}")
-            return
-        
-        #update system state after successful removal
-        if components_modified:
-            self.sequence_manager._update_metadata()
-            self.log_callback(f"removed step {self.selected_step_index + 1} from {len(components_modified)} components")
-            
-            #refresh displays and clear selection
+        if success:
+            self.log_callback(message)
             self.selected_step_index = None
+            self.selected_timestamp_ms = None
             self._update_all_displays()
         else:
-            self.log_callback(f"no keyframes found at step {self.selected_step_index + 1} timestamp")
+            messagebox.showwarning("removal blocked", message)
+            self.log_callback(f"removal failed: {message}")
     
-    #preview selected step
+    #preview selected step using unified timestamp operations
     def _preview_selected_step(self):
-        if self.selected_step_index is None:
+        if self.selected_timestamp_ms is None:
             return
         
         if not self.serial_connection.is_connected:
             messagebox.showwarning("not connected", "serial connection required for preview")
             return
         
-        commands, missing = self.playback_manager.preview_keyframe_commands(self.selected_step_index)
+        #use unified command generation
+        commands, missing = get_servo_commands_at_timestamp(
+            self.sequence_manager.get_sequence_data(),
+            self.sequence_manager.state.servo_configurations,
+            self.selected_timestamp_ms
+        )
         
         if missing:
             messagebox.showwarning("missing components", f"components not found: {', '.join(missing)}")
@@ -1109,26 +888,15 @@ class SequenceRecorderWidget:
             success_count = self.serial_connection.send_batch_commands(commands)
             self.log_callback(f"previewed step {self.selected_step_index + 1}: sent {success_count}/{len(commands)} commands")
     
-    #handle sequence events
+    #handle sequence events with delay synchronisation
     def _on_sequence_event(self, event_type, *args):
         self._update_all_displays()
+        #sync delay display with sequence manager state
+        current_delay = self.sequence_manager.get_next_recording_delay()
+        if abs(self.delay_var.get() - current_delay) > 0.01:
+            self.delay_var.set(current_delay)
     
-    #handle playback events
-    # def _on_playback_event(self, event_type, *args):
-    #     if event_type == "playbook_started":
-    #         self.frame.after(0, self._update_button_states)
-    #         self.frame.after(0, lambda: self.timeline_visualiser.start_playback_animation(
-    #             self.sequence_manager.get_total_duration()))
-            
-    #     elif event_type == "playbook_stopped":
-    #         self.frame.after(0, self._update_button_states)
-    #         self.frame.after(0, self.timeline_visualiser.stop_playback_animation)
-            
-    #     elif event_type == "playbook_error":
-    #         error_msg = args[0] if args else "unknown error"
-    #         self.frame.after(0, lambda: messagebox.showerror("playback error", error_msg))
-
-    #show modal dialog for editing keyframe delay with validation
+    #show modal dialog for editing keyframe delay with unified timestamp approach
     def _show_delay_edit_dialog(self, current_delay):
         dialog = tk.Toplevel(self.frame)
         dialog.title("edit keyframe delay")
@@ -1182,22 +950,25 @@ class SequenceRecorderWidget:
         dialog.wait_window()
         return result[0]
 
-    #handle edit delay button click with selection validation
+    #handle edit delay button with unified timestamp operations
     def _on_edit_delay_button_clicked(self):
-        if self.selected_step_index is None:
+        if self.selected_timestamp_ms is None:
             return
         
-        keyframes = self.sequence_manager.get_keyframes()
-        if self.selected_step_index >= len(keyframes) - 1:
+        #get current delay from display info
+        display_keyframes = self.sequence_manager.get_display_keyframes()
+        if self.selected_step_index >= len(display_keyframes) - 1:
             return  #cannot edit last keyframe delay
         
-        current_delay = keyframes[self.selected_step_index]["delay_to_next"]
+        current_delay = display_keyframes[self.selected_step_index]["delay_to_next"]
         new_delay = self._show_delay_edit_dialog(current_delay)
         
         if new_delay is not None:
-            success, message = self.sequence_manager.edit_keyframe_delay(self.selected_step_index, new_delay)
+            #use unified timestamp-based delay editing
+            success, message = self.sequence_manager.edit_keyframe_delay_by_timestamp(self.selected_timestamp_ms, new_delay)
             if success:
                 self.log_callback(f"updated keyframe {self.selected_step_index + 1} delay to {new_delay}s")
+                self._update_all_displays()
             else:
                 messagebox.showerror("edit error", message)
     
@@ -1207,14 +978,15 @@ class SequenceRecorderWidget:
         self._update_timeline()
         self._update_button_states()
     
-    #update sequence display (using display-compatible format)
+    #update sequence display using unified bezier format
     def _update_sequence_display(self):
         for item in self.step_tree.get_children():
             self.step_tree.delete(item)
         
-        keyframes = self.sequence_manager.get_keyframes()
+        #use unified display function instead of conversion
+        display_keyframes = self.sequence_manager.get_display_keyframes()
         
-        for i, keyframe in enumerate(keyframes):
+        for i, keyframe in enumerate(display_keyframes):
             component_positions = keyframe["component_positions"]
             component_count = len(component_positions)
             
@@ -1231,24 +1003,23 @@ class SequenceRecorderWidget:
                 component_summary
             ))
     
-    #update timeline visualiser
+    #update timeline visualiser with unified bezier format
     def _update_timeline(self):
-        keyframes = self.sequence_manager.get_keyframes()
-        total_duration = self.sequence_manager.get_total_duration()
-        self.timeline_visualiser.update_sequence(keyframes, total_duration)
+        bezier_sequences = self.sequence_manager.get_sequence_data()
+        self.timeline_visualiser.update_bezier_sequence(bezier_sequences)
     
     #update button states
     def _update_button_states(self):
         has_keyframes = self.sequence_manager.has_keyframes()
         is_playing = self.playback_manager.is_playing()
-        has_selection = self.selected_step_index is not None
+        has_selection = self.selected_timestamp_ms is not None
         is_connected = self.serial_connection.is_connected
         
         #calculate if selected keyframe can have delay edited
         can_edit_delay = False
         if has_selection and has_keyframes and not is_playing:
-            keyframes = self.sequence_manager.get_keyframes()
-            can_edit_delay = self.selected_step_index < len(keyframes) - 1  #not last keyframe
+            display_keyframes = self.sequence_manager.get_display_keyframes()
+            can_edit_delay = self.selected_step_index < len(display_keyframes) - 1
         
         self.record_button.config(state="normal" if not is_playing else "disabled")
         self.play_button.config(state="normal" if has_keyframes and not is_playing and is_connected else "disabled")
@@ -1292,4 +1063,3 @@ class SequenceRecorderWidget:
     
     def __del__(self):
         self.cleanup()
-    
