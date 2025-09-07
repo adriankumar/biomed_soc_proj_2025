@@ -41,6 +41,9 @@ class SequenceManager:
         #recording state with preserved user intentions
         self.next_recording_time = 0.0
         self.pending_recording_delay = DEFAULT_KEYFRAME_DELAY  #preserves user delay input
+
+        #exclude head components from recording/playback option
+        self.exclude_head_4 = False
     
     #add gui callback for updates
     def add_gui_callback(self, callback):
@@ -77,6 +80,12 @@ class SequenceManager:
     #record keyframe with preserved user delay intentions
     def record_keyframe(self, delay_to_next):
         component_positions = self.state.get_current_component_positions()
+
+        #optionally exclude first 4 head components from recording
+        if self.exclude_head_4:
+            for name in self._get_excluded_components():
+                if name in component_positions:
+                    component_positions.pop(name)
         
         #validate timing for recording consistency
         timing_result = validate_timing(self.next_recording_time, delay_to_next)
@@ -105,6 +114,23 @@ class SequenceManager:
         
         self._notify_gui(Events.SEQUENCE_KEYFRAME_ADDED, self.get_keyframe_count() - 1)
         return True, "keyframe recorded successfully"
+
+    #set exclude head components flag
+    def set_exclude_head_4(self, enabled):
+        self.exclude_head_4 = bool(enabled)
+
+    #get excluded component names from head group (first 4)
+    def _get_excluded_components(self):
+        head_group = self.state.get_component_group("head")
+        return head_group[:4] if isinstance(head_group, list) else []
+
+    #get sequence data filtered for playback if exclusion is enabled
+    def get_sequence_data_for_playback(self):
+        data = copy.deepcopy(self.sequence_data["servo_sequences"])
+        if not self.exclude_head_4:
+            return data
+        excluded = set(self._get_excluded_components())
+        return {k: v for k, v in data.items() if k not in excluded}
     
     #update sequence metadata preserving user delay intentions
     def _update_metadata_preserve_delay(self):
@@ -370,8 +396,8 @@ class PlaybackManager:
         if not self.serial_connection.is_connected:
             return False, "serial connection required"
         
-        #get bezier sequences and servo configurations
-        bezier_sequences = self.sequence_manager.get_sequence_data()
+        #get bezier sequences and servo configurations (apply exclusion if enabled)
+        bezier_sequences = self.sequence_manager.get_sequence_data_for_playback()
         servo_configurations = {}
         
         #build servo configuration mapping
@@ -601,7 +627,7 @@ class SequenceRecorderWidget:
     def _create_ui(self):
         main_frame = ttk.Frame(self.frame)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
+
         #delay control with live updates
         delay_frame = ttk.Frame(main_frame)
         delay_frame.pack(fill="x", pady=5)
@@ -617,7 +643,7 @@ class SequenceRecorderWidget:
         #control buttons
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(fill="x", pady=5)
-        
+
         self.record_button = ttk.Button(control_frame, text="record step", command=self._record_step)
         self.record_button.pack(side="left", padx=5)
         
@@ -629,6 +655,16 @@ class SequenceRecorderWidget:
         
         self.clear_button = ttk.Button(control_frame, text="clear", command=self._clear_sequence)
         self.clear_button.pack(side="left", padx=5)
+
+        #exclude head components toggle
+        self.exclude_head_var = tk.BooleanVar(value=False)
+        self.exclude_head_toggle = ttk.Checkbutton(
+            control_frame,
+            text="exclude head (first 4) from recording",
+            variable=self.exclude_head_var,
+            command=self._on_exclude_head_toggled
+        )
+        self.exclude_head_toggle.pack(side="left", padx=10)
         
         #file operations and motion editor
         file_frame = ttk.Frame(main_frame)
@@ -692,6 +728,14 @@ class SequenceRecorderWidget:
         
         #force initial update
         self._update_all_displays()
+
+    #handle exclude head toggle
+    def _on_exclude_head_toggled(self):
+        try:
+            enabled = bool(self.exclude_head_var.get())
+            self.sequence_manager.set_exclude_head_4(enabled)
+        except tk.TclError:
+            pass
     
     #handle delay input changes with immediate synchronisation
     def _on_delay_changed(self, *args):
@@ -1033,9 +1077,12 @@ class SequenceRecorderWidget:
         self.edit_delay_button.config(state="normal" if can_edit_delay else "disabled")
         
         self.delay_spinbox.config(state="normal" if not is_playing else "disabled")
-        
+
         #motion editor button
         self.motion_editor_button.config(state="normal" if has_keyframes and not is_playing else "disabled")
+
+        #exclude head toggle is only changeable when sequence is empty
+        self.exclude_head_toggle.config(state="normal" if (not has_keyframes and not is_playing) else "disabled")
     
     #widget visibility methods
     def show(self):
