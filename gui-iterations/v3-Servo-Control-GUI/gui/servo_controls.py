@@ -1,15 +1,16 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import time
-from core.validation import validate_pulse_width, validate_servo_index, SLIDER_THROTTLE_MS
+from core.validation import validate_pulse_width, validate_servo_index, SLIDER_THROTTLE_MS, SMALL_DELTA_PWM, SMOOTH_SHORT_S, SMOOTH_LONG_S
 from core.event_system import subscribe_component, subscribe, Events
+from core.bezier_interpolation import execute_smooth_transition
 
 class ServoControlWidget:
     #individual servo control widget with simplified rename functionality
-    def __init__(self, parent, component_name, state, send_command_callback, rename_callback):
+    def __init__(self, parent, component_name, state, serial_connection, rename_callback):
         self.component_name = component_name
         self.state = state
-        self.send_command = send_command_callback
+        self.serial_connection = serial_connection
         self.rename_callback = rename_callback
         self.last_command_time = 0
         
@@ -72,6 +73,8 @@ class ServoControlWidget:
             command=self._on_slider_changed
         )
         self.slider.pack()
+        #bind slider release for smoothing mode
+        self.slider.bind("<ButtonRelease-1>", self._on_slider_release)
         
         self.min_label = ttk.Label(slider_frame, text=str(self.config["pulse_min"]))
         self.min_label.pack()
@@ -138,11 +141,24 @@ class ServoControlWidget:
     #handle slider changes with throttling
     def _on_slider_changed(self, value):
         current_time = time.time()
+        pulse_width = int(round(float(value)))
+        self.pulse_width_var.set(pulse_width)
+        if self.state.realtime_smoothing_enabled:
+            #suppress sends during drag when smoothing is enabled
+            return
         if (current_time - self.last_command_time) * 1000 > SLIDER_THROTTLE_MS:
-            pulse_width = int(round(float(value)))
-            self.pulse_width_var.set(pulse_width)
             self._send_servo_command(pulse_width)
             self.last_command_time = current_time
+
+    #handle slider release to execute smoothing transition when enabled
+    def _on_slider_release(self, event=None):
+        if not self.state.realtime_smoothing_enabled:
+            return
+        target = int(self.pulse_width_var.get())
+        last_sent = self.state.get_last_sent(self.component_name)
+        delta = abs(target - last_sent)
+        duration = SMOOTH_SHORT_S if delta <= SMALL_DELTA_PWM else SMOOTH_LONG_S
+        execute_smooth_transition(self.frame, self.serial_connection, self.state, {self.component_name: target}, duration)
     
     #handle current pulse width entry
     def _on_current_entry(self, event=None):
@@ -244,10 +260,10 @@ class ServoControlWidget:
             return  #validation failed, don't attempt serial command
         
         #attempt serial communication (independent of state update)
-        if self.send_command:
+        if self.serial_connection:
             servo_index = self.config["index"]
             command = f"SP:{servo_index}:{pulse_width}"
-            serial_success = self.send_command(command)
+            self.serial_connection.send_command(command)
             
             #serial failure doesn't affect state consistency
             #gui and state remain synchronised regardless of hardware communication
@@ -256,7 +272,11 @@ class ServoControlWidget:
     def reset_to_default(self):
         default_pos = self.config["default_position"]
         self.pulse_width_var.set(default_pos)
-        self._send_servo_command(default_pos)
+        #use smoothing for safety when connected
+        if self.serial_connection and self.serial_connection.is_connected:
+            execute_smooth_transition(self.frame, self.serial_connection, self.state, {self.component_name: default_pos}, SMOOTH_LONG_S)
+        else:
+            self._send_servo_command(default_pos)
     
     #update slider range
     def _update_slider_range(self):
@@ -330,10 +350,10 @@ class ServoControlWidget:
 
 class ServoControlsManager:
     #manages grouped servo control widgets using component groups order authority
-    def __init__(self, parent, state, send_command_callback):
+    def __init__(self, parent, state, serial_connection):
         self.frame = ttk.LabelFrame(parent, text="servo controls")
         self.state = state
-        self.send_command = send_command_callback
+        self.serial_connection = serial_connection
         
         self.servo_widgets = {}
         self.selected_component_group = tk.StringVar()
@@ -411,7 +431,7 @@ class ServoControlsManager:
                 self.controls_container, 
                 component_name, 
                 self.state, 
-                self.send_command,
+                self.serial_connection,
                 self._on_component_renamed
             )
             widget.frame.pack(side="left", fill="y", padx=5, pady=5)
@@ -445,14 +465,19 @@ class ServoControlsManager:
     
     #reset all servos to defaults using component groups order
     def _reset_all_servos(self):
-        reset_commands = self.state.reset_all_servos_to_defaults()
-        
-        for servo_index, pulse_width in reset_commands:
-            if self.send_command:
-                self.send_command(f"SP:{servo_index}:{pulse_width}")
-        
-        #refresh visible widgets using component groups order
-        self._refresh_visible_widgets()
+        #build targets and execute smoothing transition when connected
+        targets = {}
+        for group_name, components in self.state.component_groups.items():
+            for name in components:
+                if name in self.state.servo_configurations:
+                    targets[name] = self.state.servo_configurations[name]["default_position"]
+
+        if self.serial_connection and self.serial_connection.is_connected:
+            execute_smooth_transition(self.frame, self.serial_connection, self.state, targets, SMOOTH_LONG_S)
+        else:
+            #fallback to immediate state reset without sending
+            self.state.reset_all_servos_to_defaults()
+            self._refresh_visible_widgets()
     
     #save servo configuration using component groups order
     def _save_servo_config(self):

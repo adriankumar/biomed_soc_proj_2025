@@ -93,6 +93,8 @@ class ConfigDialog:
                 
                 #mark as custom config
                 self.config_data["_custom_config"] = True
+                #store file path for live persistence
+                self.config_data["_config_file_path"] = file_path
                 
                 self.choice_made = True
                 self.dialog.destroy()

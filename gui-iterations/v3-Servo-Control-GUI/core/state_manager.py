@@ -1,4 +1,5 @@
 import json
+import os
 from tkinter import filedialog, messagebox
 from hardware.servo_config import DEFAULT_COMPONENT_CONFIGS, MAX_SERVOS, PWM_FREQUENCY, COMPONENT_GROUPS
 from core.validation import validate_pulse_range, validate_pulse_within_range
@@ -23,9 +24,38 @@ class ServoState:
         self.num_servos = MAX_SERVOS
         self.pwm_freq = PWM_FREQUENCY
         self.is_connected = False
+
+        #last sent pwm positions to hardware (hardware-truth)
+        self.last_sent_positions = {}
+
+        #realtime smoothing mode for live editors (sliders/keyframe drag)
+        self.realtime_smoothing_enabled = True
         
         #sequence manager reference
         self.sequence_manager = None
+
+        #initialise last sent positions from defaults
+        for component_name, cfg in self.servo_configurations.items():
+            self.last_sent_positions[component_name] = cfg.get("default_position", 375)
+
+        #live persistence for custom configs
+        self.live_persist_enabled = False
+        self.live_config_path = None
+
+        #enable live persistence and seed last sent from loaded config if provided
+        if config_data and isinstance(config_data, dict):
+            #seed last sent from saved config if available
+            if "last_sent_positions" in config_data and isinstance(config_data["last_sent_positions"], dict):
+                for name, value in config_data["last_sent_positions"].items():
+                    if name in self.servo_configurations:
+                        cfg = self.servo_configurations[name]
+                        clamped = max(cfg["pulse_min"], min(cfg["pulse_max"], int(value)))
+                        self.last_sent_positions[name] = clamped
+
+            #enable live persistence only for loaded custom configs with path
+            if config_data.get("_custom_config") and config_data.get("_config_file_path"):
+                self.live_config_path = config_data.get("_config_file_path")
+                self.live_persist_enabled = True
     
     #load configuration data with component creation for renamed components
     def _load_config_data(self, config_data):
@@ -53,10 +83,17 @@ class ServoState:
                     #overlay loaded values onto default structure
                     default_config.update(loaded_config)
                     self.servo_configurations[component_name] = default_config
+        
+        #last sent positions are seeded in __init__ after initialisation
     
     #set sequence manager reference
     def set_sequence_manager(self, sequence_manager):
         self.sequence_manager = sequence_manager
+
+    #set live persistence for this session
+    def set_live_persistence(self, file_path):
+        self.live_config_path = file_path
+        self.live_persist_enabled = bool(file_path)
     
     #get component configuration using name lookup
     def get_component_config(self, component_name):
@@ -101,7 +138,11 @@ class ServoState:
             
             #publish rename event for any listeners
             publish(Events.COMPONENT_SETTING_CHANGED, new_name, "name", new_name, component_name=new_name)
-            
+
+            #live persist rename changes
+            if self.live_persist_enabled and self.live_config_path:
+                self._live_persist_rename(old_name, new_name)
+
             return True, f"renamed '{old_name}' to '{new_name}'"
             
         except Exception as e:
@@ -116,6 +157,8 @@ class ServoState:
                     components[index] = old_name
             
             return False, f"rename failed: {str(e)}"
+
+        
     
     #update component setting with validation and events
     def update_component_setting(self, component_name, setting, value):
@@ -134,7 +177,11 @@ class ServoState:
         
         #publish event immediately
         publish(Events.COMPONENT_SETTING_CHANGED, component_name, setting, value, component_name=component_name)
-        
+
+        #live persist supported settings
+        if self.live_persist_enabled and self.live_config_path and setting in ("default_position", "index"):
+            self._live_persist_component_setting(component_name, setting, value)
+
         return True
     
     #update component pulse range with validation and events
@@ -159,7 +206,13 @@ class ServoState:
         
         #publish event immediately
         publish(Events.COMPONENT_RANGE_CHANGED, component_name, component_name=component_name)
-        
+
+        #clamp last sent to new range and persist
+        if component_name in self.last_sent_positions:
+            self.last_sent_positions[component_name] = max(pulse_min, min(pulse_max, self.last_sent_positions[component_name]))
+        if self.live_persist_enabled and self.live_config_path:
+            self._live_persist_range(component_name, pulse_min, pulse_max)
+
         return True
     
     #update servo position immediately regardless of serial connection status
@@ -182,7 +235,7 @@ class ServoState:
         
         #publish position change event immediately for all listeners
         publish(Events.COMPONENT_POSITION_CHANGED, component_name, pulse_width, component_name=component_name)
-        
+
         return True
     
     #swap component indices with immediate event publishing
@@ -202,7 +255,12 @@ class ServoState:
         #also publish individual setting changes for each component
         publish(Events.COMPONENT_SETTING_CHANGED, component1, "index", config1["index"], component_name=component1)
         publish(Events.COMPONENT_SETTING_CHANGED, component2, "index", config2["index"], component_name=component2)
-        
+
+        #live persist index swap
+        if self.live_persist_enabled and self.live_config_path:
+            self._live_persist_index(component1, config1["index"])
+            self._live_persist_index(component2, config2["index"])
+
         return True
     
     #reset all servos to default positions with events
@@ -235,6 +293,35 @@ class ServoState:
         if connected != self.is_connected:
             self.is_connected = connected
             publish(Events.CONNECTION_CHANGED, connected)
+
+    #persist last sent pwm to loaded config immediately after successful serial send
+    def update_last_sent(self, component_name, pulse_width):
+        if component_name in self.servo_configurations:
+            cfg = self.servo_configurations[component_name]
+            clamped = max(cfg["pulse_min"], min(cfg["pulse_max"], int(pulse_width)))
+            self.last_sent_positions[component_name] = clamped
+            if self.live_persist_enabled and self.live_config_path:
+                self._live_persist_last_sent()
+
+    def update_last_sent_by_index(self, servo_index, pulse_width):
+        comp_name, _ = self.get_servo_config_by_index(servo_index)
+        if comp_name:
+            self.update_last_sent(comp_name, pulse_width)
+
+    #get last sent pwm for component
+    def get_last_sent(self, component_name):
+        return self.last_sent_positions.get(
+            component_name,
+            self.servo_configurations.get(component_name, {}).get("default_position", 375)
+        )
+
+    
+
+    #set realtime smoothing mode for live editors
+    def set_realtime_smoothing_enabled(self, enabled):
+        if bool(enabled) != self.realtime_smoothing_enabled:
+            self.realtime_smoothing_enabled = bool(enabled)
+            publish(Events.REALTIME_SMOOTHING_MODE_CHANGED, self.realtime_smoothing_enabled)
     
     #get servo config by index
     def get_servo_config_by_index(self, servo_index):
@@ -282,10 +369,20 @@ class ServoState:
                                 "current_position": config["default_position"]
                             }
                 
+                #include last sent pwm positions
+                config_data["last_sent_positions"] = {}
+                for name in list(self.servo_configurations.keys()):
+                    if name in self.last_sent_positions:
+                        cfg = self.servo_configurations[name]
+                        val = max(cfg["pulse_min"], min(cfg["pulse_max"], int(self.last_sent_positions[name])))
+                        config_data["last_sent_positions"][name] = val
+
                 with open(file_path, 'w') as file:
                     json.dump(config_data, file, indent=2)
-                
+
                 messagebox.showinfo("config saved", f"configuration saved successfully to:\n{file_path}")
+                #enable live persistence for this saved file
+                self.set_live_persistence(file_path)
                 return True
                 
         except Exception as e:
@@ -295,3 +392,95 @@ class ServoState:
     #cleanup resources
     def cleanup(self):
         self.sequence_manager = None
+
+    #read current live config json
+    def _live_read_config(self):
+        try:
+            if not (self.live_persist_enabled and self.live_config_path):
+                return None
+            with open(self.live_config_path, 'r') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return None
+            return data
+        except Exception:
+            return None
+
+    #write live config json atomically
+    def _live_write_config(self, data):
+        try:
+            if not (self.live_persist_enabled and self.live_config_path):
+                return False
+            temp_path = self.live_config_path + ".tmp"
+            with open(temp_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            os.replace(temp_path, self.live_config_path)
+            return True
+        except Exception:
+            return False
+
+    #persist only last sent positions
+    def _live_persist_last_sent(self):
+        data = self._live_read_config()
+        if data is None:
+            return False
+        out = {}
+        for name, cfg in self.servo_configurations.items():
+            if name in self.last_sent_positions:
+                val = max(cfg["pulse_min"], min(cfg["pulse_max"], int(self.last_sent_positions[name])))
+                out[name] = val
+        data["last_sent_positions"] = out
+        return self._live_write_config(data)
+
+    #persist a single component setting change
+    def _live_persist_component_setting(self, component_name, setting, value):
+        data = self._live_read_config()
+        if data is None:
+            return False
+        components = data.get("components") or {}
+        if component_name in components:
+            components[component_name][setting] = value
+        data["components"] = components
+        #also persist last sent if needed
+        return self._live_write_config(data)
+
+    #persist pulse range and clamp last sent
+    def _live_persist_range(self, component_name, pulse_min, pulse_max):
+        data = self._live_read_config()
+        if data is None:
+            return False
+        components = data.get("components") or {}
+        if component_name in components:
+            components[component_name]["pulse_min"] = pulse_min
+            components[component_name]["pulse_max"] = pulse_max
+        #rebuild last sent section with clamping
+        self._live_write_config(data)
+        return self._live_persist_last_sent()
+
+    #persist index after swap or update
+    def _live_persist_index(self, component_name, index_value):
+        return self._live_persist_component_setting(component_name, "index", index_value)
+
+    #persist rename across sections
+    def _live_persist_rename(self, old_name, new_name):
+        data = self._live_read_config()
+        if data is None:
+            return False
+        #components
+        components = data.get("components") or {}
+        if old_name in components and new_name not in components:
+            components[new_name] = components.pop(old_name)
+        data["components"] = components
+        #component groups
+        groups = data.get("component_groups") or {}
+        for gname, items in groups.items():
+            for i, nm in enumerate(list(items)):
+                if nm == old_name:
+                    items[i] = new_name
+        data["component_groups"] = groups
+        #last sent positions
+        lsp = data.get("last_sent_positions") or {}
+        if old_name in lsp and new_name not in lsp:
+            lsp[new_name] = lsp.pop(old_name)
+        data["last_sent_positions"] = lsp
+        return self._live_write_config(data)

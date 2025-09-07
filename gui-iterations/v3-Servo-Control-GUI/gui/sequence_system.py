@@ -17,7 +17,8 @@ from core.bezier_interpolation import (
     edit_keyframe_delay_at_timestamp, create_command_timeline_from_bezier,
     get_keyframe_count_from_bezier, get_sequence_components_from_bezier, 
     validate_bezier_sequence_integrity, insert_keyframes_into_bezier_sequences, 
-    get_servo_commands_at_timestamp, create_unified_playback_executor
+    get_servo_commands_at_timestamp, create_unified_playback_executor,
+    execute_smooth_transition
 )
 from gui.motion_editor import MotionEditor
 
@@ -874,19 +875,17 @@ class SequenceRecorderWidget:
             messagebox.showwarning("not connected", "serial connection required for preview")
             return
         
-        #use unified command generation
-        commands, missing = get_servo_commands_at_timestamp(
-            self.sequence_manager.get_sequence_data(),
-            self.sequence_manager.state.servo_configurations,
-            self.selected_timestamp_ms
-        )
-        
-        if missing:
-            messagebox.showwarning("missing components", f"components not found: {', '.join(missing)}")
-        
-        if commands:
-            success_count = self.serial_connection.send_batch_commands(commands)
-            self.log_callback(f"previewed step {self.selected_step_index + 1}: sent {success_count}/{len(commands)} commands")
+        #build targets map at selected timestamp for smooth transition
+        bezier_sequences = self.sequence_manager.get_sequence_data()
+        found = find_keyframes_at_timestamp(bezier_sequences, self.selected_timestamp_ms)
+        targets = {comp: info['keyframe']['angle'] for comp, info in found.items()}
+        if not targets:
+            messagebox.showwarning("preview unavailable", "no keyframes found at selected time")
+            return
+
+        success, msg = execute_smooth_transition(self.frame, self.serial_connection, self.sequence_manager.state, targets, 1.0, self.log_callback)
+        if success:
+            self.log_callback(f"previewed step {self.selected_step_index + 1} with smooth transition")
     
     #handle sequence events with delay synchronisation
     def _on_sequence_event(self, event_type, *args):

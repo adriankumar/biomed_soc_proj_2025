@@ -8,7 +8,7 @@ import copy
 import time
 from core.bezier_interpolation import (
     bezier_point, control_point_absolute, compute_curve_segment, 
-    ensure_control_points, generate_playback_points
+    ensure_control_points, generate_playback_points, execute_smooth_transition
 )
 
 class MotionEditor:
@@ -369,6 +369,17 @@ class MotionEditor:
     #handle mouse release
     def _on_mouse_release(self, event):
         if event.button == 1:
+            #execute smoothing transition on release for keyframe moves when enabled
+            if self.dragging_element and self.dragging_element.get('type') == 'keyframe':
+                if self.state_manager.realtime_smoothing_enabled and self.serial_connection and self.serial_connection.is_connected:
+                    keyframes = self._get_current_sequence()
+                    idx = self.dragging_element['index']
+                    if 0 <= idx < len(keyframes):
+                        target = int(keyframes[idx]['angle'])
+                        last_sent = self.state_manager.get_last_sent(self.current_component)
+                        delta = abs(target - last_sent)
+                        duration = 0.5 if delta <= 50 else 1.0
+                        execute_smooth_transition(self.window, self.serial_connection, self.state_manager, {self.current_component: target}, duration)
             self.dragging_element = None
     
     #handle mouse motion for dragging
@@ -401,8 +412,9 @@ class MotionEditor:
                     keyframes[kf_index]['angle'] = target_angle
                     data_changed = True
                     
-                    #real-time hardware preview
-                    self._send_position_preview(target_angle)
+                    #real-time hardware preview only when smoothing off
+                    if not self.state_manager.realtime_smoothing_enabled:
+                        self._send_position_preview(target_angle)
                     
                     #update angle display
                     if self.selected_kf_index == kf_index:

@@ -217,7 +217,7 @@ class ServoControlGUI:
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         #serial connection frame (top)
-        self.serial_connection = SerialConnection(main_frame, self._log_message)
+        self.serial_connection = SerialConnection(main_frame, self._log_message, state_manager=self.state)
         self.serial_connection.frame.pack(fill="x", pady=(0, 5))
         
         #main content area
@@ -230,9 +230,9 @@ class ServoControlGUI:
         
         #servo controls (left)
         self.servo_controls = ServoControlsManager(
-            content_frame, 
-            self.state, 
-            self.serial_connection.send_command
+            content_frame,
+            self.state,
+            self.serial_connection
         )
         self.servo_controls.frame.grid(row=0, column=0, sticky="nw", padx=(0, 10))
         

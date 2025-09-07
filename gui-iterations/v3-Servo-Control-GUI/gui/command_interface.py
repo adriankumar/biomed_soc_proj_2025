@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
-from core.validation import COMMAND_HISTORY_LIMIT
+from core.validation import COMMAND_HISTORY_LIMIT, SMOOTH_LONG_S
+from core.bezier_interpolation import execute_smooth_transition
 
 #simplified command templates for terminal interface
 COMMAND_TEMPLATES = {
@@ -480,17 +481,18 @@ class CommandTerminal:
             self.log_callback("failed to save servo configuration")
     
     def _cmd_reset_all(self):
-        reset_commands = self.state.reset_all_servos_to_defaults()
-        
+        targets = {}
+        for component_name, config in self.state.servo_configurations.items():
+            targets[component_name] = config["default_position"]
+
         if self.serial_connection.is_connected:
-            success_count = 0
-            for servo_index, pulse_width in reset_commands:
-                if self.serial_connection.send_command(f"SP:{servo_index}:{pulse_width}"):
-                    success_count += 1
-            
-            self.log_callback(f"reset {success_count}/{len(reset_commands)} servos to default positions")
+            success, msg = execute_smooth_transition(self.frame, self.serial_connection, self.state, targets, SMOOTH_LONG_S, self.log_callback)
+            if success:
+                self.log_callback("reset all using smooth transition")
         else:
-            self.log_callback(f"reset {len(reset_commands)} servos to default positions (not connected)")
+            #fallback to immediate state reset without sending
+            self.state.reset_all_servos_to_defaults()
+            self.log_callback(f"reset {len(targets)} servos to default positions (not connected)")
     
     #sequence commands
     def _cmd_record(self, delay_str):

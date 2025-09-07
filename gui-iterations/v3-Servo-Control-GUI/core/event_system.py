@@ -160,3 +160,6 @@ class Events:
     PLAYBACK_STARTED = "playback_started"
     PLAYBACK_STOPPED = "playback_stopped"
     PLAYBACK_ERROR = "playback_error"
+
+    #realtime editing mode
+    REALTIME_SMOOTHING_MODE_CHANGED = "realtime_smoothing_mode_changed"

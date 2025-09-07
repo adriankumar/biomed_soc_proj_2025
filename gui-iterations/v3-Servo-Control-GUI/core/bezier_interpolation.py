@@ -1,5 +1,6 @@
 import numpy as np
 import time
+# from core.validation import SMOOTH_SHORT_S, SMOOTH_LONG_S, SMALL_DELTA_PWM
 #pure mathematical bezier computation functions for servo motion interpolation
 
 def bezier_point(t, p0, p1, p2, p3):
@@ -248,6 +249,51 @@ def calculate_total_duration_ms(bezier_sequences):
             max_time = max(max_time, component_max)
     
     return max_time
+
+def _clamp_to_config(component_name, value, servo_configurations):
+    #clamp single pwm value to component's configured range
+    cfg = servo_configurations.get(component_name, {})
+    return int(max(cfg.get('pulse_min', 0), min(cfg.get('pulse_max', 4095), int(value))))
+
+def build_transition_sequences(from_map, to_map, duration_ms, servo_configurations):
+    #build two-keyframe bezier sequences from current to target values
+    sequences = {}
+    for component_name, target in to_map.items():
+        start = from_map.get(component_name, target)
+        start = _clamp_to_config(component_name, start, servo_configurations)
+        end = _clamp_to_config(component_name, target, servo_configurations)
+        keyframes = [
+            {"time": 0, "angle": int(start), "cp_in": None, "cp_out": None},
+            {"time": int(duration_ms), "angle": int(end), "cp_in": None, "cp_out": None}
+        ]
+        ensure_control_points(keyframes, use_smooth_defaults=True)
+        sequences[component_name] = keyframes
+    return sequences
+
+def execute_smooth_transition(gui_widget, serial_connection, state_manager, targets, duration_seconds, log_callback=None):
+    #execute smooth transition from last sent positions to targets over duration
+    if not isinstance(targets, dict) or not targets:
+        return False, "no targets provided"
+
+    if not serial_connection or not serial_connection.is_connected:
+        #no connection - update gui state only and do not touch last sent positions
+        for comp, val in targets.items():
+            state_manager.update_servo_position(comp, int(val))
+        return False, "not connected"
+
+    duration_ms = int(max(0, duration_seconds * 1000))
+    from_map = {comp: state_manager.get_last_sent(comp) for comp in targets.keys()}
+    bezier_sequences = build_transition_sequences(from_map, targets, duration_ms, state_manager.servo_configurations)
+
+    #use unified playback executor to schedule commands reliably
+    executor = create_unified_playback_executor(gui_widget, serial_connection, log_callback)
+
+    def _on_complete(success, msg=None):
+        #update gui state to final targets after completion
+        for comp, val in targets.items():
+            state_manager.update_servo_position(comp, int(val))
+
+    return executor.execute_playback(bezier_sequences, state_manager.servo_configurations, completion_callback=_on_complete)
 
 def get_sequence_display_info(bezier_sequences, preserve_original_delays=True):
     #create display-compatible keyframe info without precision loss from bezier sequences

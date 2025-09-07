@@ -29,6 +29,11 @@ SLIDER_THROTTLE_MS = 50 #controls how fast the slider sends pulse width values; 
 PLAYBACK_COMMAND_INTERVAL = 0.005
 PLAYBACK_TIMING_PRECISION = 0.01
 
+#smoothing preferences
+SMALL_DELTA_PWM = 50
+SMOOTH_SHORT_S = 0.5
+SMOOTH_LONG_S = 1.0
+
 #command terminal
 COMMAND_HISTORY_LIMIT = 10
 

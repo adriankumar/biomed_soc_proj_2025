@@ -71,9 +71,10 @@ class CPUMonitor:
 
 class SerialConnection:
     #manages direct serial communication with esp32 and cpu monitoring
-    def __init__(self, parent, log_callback):
+    def __init__(self, parent, log_callback, state_manager=None):
         self.frame = ttk.LabelFrame(parent, text="serial connection & system monitor")
         self.log_callback = log_callback
+        self.state_manager = state_manager
         
         #connection state
         self.serial_connection = None
@@ -140,6 +141,18 @@ class SerialConnection:
         self.status_label = ttk.Label(status_frame, text="disconnected", foreground="red")
         self.status_label.pack(side="left", padx=5)
         
+        #realtime smoothing toggle for live editors
+        toggle_frame = ttk.Frame(status_frame)
+        toggle_frame.pack(side="left", padx=5)
+        self.realtime_smooth_var = tk.BooleanVar(value=getattr(self.state_manager, 'realtime_smoothing_enabled', True))
+        self.realtime_toggle = ttk.Checkbutton(
+            toggle_frame,
+            text="smooth real-time edits (on release)",
+            variable=self.realtime_smooth_var,
+            command=self._on_toggle_realtime_smoothing
+        )
+        self.realtime_toggle.pack(side="left")
+
         #cpu usage display
         self.cpu_label = ttk.Label(status_frame, text=self.cpu_usage_text, foreground="blue")
         self.cpu_label.pack(side="right", padx=5)
@@ -151,6 +164,11 @@ class SerialConnection:
         #update cpu label separately
         if hasattr(self, 'cpu_label'):
             self.cpu_label.config(text=self.cpu_usage_text)
+
+    #handle realtime smoothing toggle
+    def _on_toggle_realtime_smoothing(self):
+        if self.state_manager:
+            self.state_manager.set_realtime_smoothing_enabled(bool(self.realtime_smooth_var.get()))
     
     #refresh available serial ports
     def refresh_ports(self):
@@ -215,13 +233,23 @@ class SerialConnection:
     def send_command(self, command):
         if not self.is_connected or not self.serial_connection:
             return False
-        
+
         try:
             if not command.endswith('\n'):
                 command += '\n'
             
             self.serial_connection.write(command.encode('utf-8'))
             self.log_callback(f"sent: {command.strip()}")
+            #update last sent on successful sp commands
+            if self.state_manager and command.startswith("SP:"):
+                try:
+                    parts = command.strip().split(":")
+                    if len(parts) >= 3:
+                        idx = int(parts[1])
+                        pwm = int(parts[2])
+                        self.state_manager.update_last_sent_by_index(idx, pwm)
+                except Exception:
+                    pass
             return True
             
         except Exception as e:
