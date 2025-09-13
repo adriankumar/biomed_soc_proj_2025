@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import time
 from core.validation import validate_pulse_width, validate_servo_index, SLIDER_THROTTLE_MS, SMALL_DELTA_PWM, SMOOTH_SHORT_S, SMOOTH_LONG_S
-from core.event_system import subscribe_component, subscribe, Events
+from core.event_system import subscribe_component, subscribe, unsubscribe, Events
 from core.bezier_interpolation import execute_smooth_transition
 
 class ServoControlWidget:
@@ -37,8 +37,7 @@ class ServoControlWidget:
             Events.COMPONENT_SETTING_CHANGED
         ], self._on_component_event)
         
-        #subscribe to index swap events for all components
-        subscribe([Events.COMPONENT_INDEX_SWAPPED], self._on_index_swap)
+        #subscribe to index swap events handled by manager only
     
     #create individual servo control widget with rename capability
     def _create_widget(self):
@@ -338,14 +337,13 @@ class ServoControlWidget:
                 self.frame.update_idletasks()
             elif setting == "default_position":
                 self.default_position_var.set(value)
-    
-    #handle index swap events
-    def _on_index_swap(self, event_type, *args, **kwargs):
-        component1, component2 = args
-        if component1 == self.component_name or component2 == self.component_name:
-            self.index_var.set(self.config["index"])
-            self.frame.update_idletasks()
-            self.frame.after(50, self._refresh_all_displays)
+
+    #cleanup subscriptions before widget destruction
+    def cleanup(self):
+        try:
+            unsubscribe(self._on_component_event)
+        except Exception:
+            pass
 
 
 class ServoControlsManager:
@@ -412,7 +410,12 @@ class ServoControlsManager:
     
     #handle component group selection change with complete widget rebuild
     def _on_group_changed(self):
-        #clear all existing widgets completely
+        #cleanup and clear all existing widgets completely
+        for w in list(self.servo_widgets.values()):
+            try:
+                w.cleanup()
+            except Exception:
+                pass
         for widget in self.controls_container.winfo_children():
             widget.destroy()
         

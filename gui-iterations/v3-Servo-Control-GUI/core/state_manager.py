@@ -56,6 +56,11 @@ class ServoState:
             if config_data.get("_custom_config") and config_data.get("_config_file_path"):
                 self.live_config_path = config_data.get("_config_file_path")
                 self.live_persist_enabled = True
+
+        #fast lookup maps for index/name resolution
+        self.name_to_index = {}
+        self.index_to_name = {}
+        self._rebuild_index_maps()
     
     #load configuration data with component creation for renamed components
     def _load_config_data(self, config_data):
@@ -83,8 +88,25 @@ class ServoState:
                     #overlay loaded values onto default structure
                     default_config.update(loaded_config)
                     self.servo_configurations[component_name] = default_config
+
+            #prune any components not present in loaded config to prevent stale defaults
+            loaded_names = set(config_data["components"].keys())
+            for name in list(self.servo_configurations.keys()):
+                if name not in loaded_names:
+                    self.servo_configurations.pop(name, None)
         
         #last sent positions are seeded in __init__ after initialisation
+
+    #rebuild fast index/name maps from configurations
+    def _rebuild_index_maps(self):
+        self.name_to_index = {}
+        self.index_to_name = {}
+        for name, cfg in self.servo_configurations.items():
+            idx = cfg.get("index")
+            self.name_to_index[name] = idx
+            #only keep first mapping for an index
+            if idx not in self.index_to_name:
+                self.index_to_name[idx] = name
     
     #set sequence manager reference
     def set_sequence_manager(self, sequence_manager):
@@ -135,6 +157,13 @@ class ServoState:
                 if old_name in components:
                     index = components.index(old_name)
                     components[index] = new_name
+
+            #migrate last sent position if available
+            if old_name in self.last_sent_positions:
+                self.last_sent_positions[new_name] = self.last_sent_positions.pop(old_name)
+
+            #rebuild index maps to reflect rename
+            self._rebuild_index_maps()
             
             #publish rename event for any listeners
             publish(Events.COMPONENT_SETTING_CHANGED, new_name, "name", new_name, component_name=new_name)
@@ -181,6 +210,10 @@ class ServoState:
         #live persist supported settings
         if self.live_persist_enabled and self.live_config_path and setting in ("default_position", "index"):
             self._live_persist_component_setting(component_name, setting, value)
+
+        #keep index/name maps in sync
+        if setting == "index":
+            self._rebuild_index_maps()
 
         return True
     
@@ -261,6 +294,9 @@ class ServoState:
             self._live_persist_index(component1, config1["index"])
             self._live_persist_index(component2, config2["index"])
 
+        #rebuild index maps after swap
+        self._rebuild_index_maps()
+
         return True
     
     #reset all servos to default positions with events
@@ -299,12 +335,16 @@ class ServoState:
         if component_name in self.servo_configurations:
             cfg = self.servo_configurations[component_name]
             clamped = max(cfg["pulse_min"], min(cfg["pulse_max"], int(pulse_width)))
+            #update gui state to reflect hardware-truth
+            self.update_servo_position(component_name, clamped)
+            #update last sent position
             self.last_sent_positions[component_name] = clamped
+            #persist if enabled
             if self.live_persist_enabled and self.live_config_path:
                 self._live_persist_last_sent()
 
     def update_last_sent_by_index(self, servo_index, pulse_width):
-        comp_name, _ = self.get_servo_config_by_index(servo_index)
+        comp_name = self.index_to_name.get(servo_index)
         if comp_name:
             self.update_last_sent(comp_name, pulse_width)
 
@@ -325,9 +365,9 @@ class ServoState:
     
     #get servo config by index
     def get_servo_config_by_index(self, servo_index):
-        for component_name, config in self.servo_configurations.items():
-            if config["index"] == servo_index:
-                return component_name, config
+        name = self.index_to_name.get(servo_index)
+        if name and name in self.servo_configurations:
+            return name, self.servo_configurations[name]
         return None, None
     
     #get current positions using component groups order for reliable state tracking
@@ -468,7 +508,7 @@ class ServoState:
             return False
         #components
         components = data.get("components") or {}
-        if old_name in components and new_name not in components:
+        if old_name in components:
             components[new_name] = components.pop(old_name)
         data["components"] = components
         #component groups
@@ -480,7 +520,7 @@ class ServoState:
         data["component_groups"] = groups
         #last sent positions
         lsp = data.get("last_sent_positions") or {}
-        if old_name in lsp and new_name not in lsp:
+        if old_name in lsp:
             lsp[new_name] = lsp.pop(old_name)
         data["last_sent_positions"] = lsp
         return self._live_write_config(data)
