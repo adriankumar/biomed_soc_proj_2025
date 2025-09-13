@@ -33,6 +33,7 @@ PLAYBACK_TIMING_PRECISION = 0.01
 SMALL_DELTA_PWM = 50
 SMOOTH_SHORT_S = 0.5
 SMOOTH_LONG_S = 1.0
+LEAD_IN_DURATION_MS = 1000
 
 #command terminal
 COMMAND_HISTORY_LIMIT = 10
@@ -278,3 +279,38 @@ def validate_interpolation_data(interpolation_data, component_name=""):
                         return ValidationResult(False, None, f"{component_prefix}{cp_type} {offset_result.error_message}")
     
     return ValidationResult(True, interpolation_data, "")
+
+#realtime smoothing activation check
+def is_smoothing_active(state_manager, serial_connection):
+    try:
+        return bool(serial_connection and serial_connection.is_connected and state_manager.realtime_smoothing_enabled)
+    except Exception:
+        return False
+
+#filter transition targets by removing components that do not need movement
+def filter_transition_targets(state_manager, targets, tolerance_pwm=0):
+    if not isinstance(targets, dict):
+        return {}
+    filtered = {}
+    for name, target in targets.items():
+        try:
+            last_sent = state_manager.get_last_sent(name)
+            if abs(int(target) - int(last_sent)) <= int(tolerance_pwm):
+                continue
+            cfg = state_manager.get_component_config(name)
+            if not cfg:
+                continue
+            clamped = max(cfg["pulse_min"], min(cfg["pulse_max"], int(target)))
+            filtered[name] = clamped
+        except Exception:
+            continue
+    return filtered
+
+#plan lead-in based on realtime smoothing and actual movement needs
+def plan_lead_in(state_manager, serial_connection, targets, duration_ms=LEAD_IN_DURATION_MS, tolerance_pwm=0):
+    if not is_smoothing_active(state_manager, serial_connection):
+        return False, {}, 0
+    filtered = filter_transition_targets(state_manager, targets, tolerance_pwm=tolerance_pwm)
+    if not filtered:
+        return False, {}, 0
+    return True, filtered, int(duration_ms)

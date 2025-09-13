@@ -7,7 +7,7 @@ import copy
 from core.validation import (
     MAX_SEQUENCE_DURATION, MIN_KEYFRAME_INTERVAL, MAX_KEYFRAME_DELAY, 
     DEFAULT_KEYFRAME_DELAY, PLAYBACK_COMMAND_INTERVAL, PLAYBACK_TIMING_PRECISION,
-    validate_timing, validate_component_positions
+    validate_timing, validate_component_positions, LEAD_IN_DURATION_MS, plan_lead_in
 )
 from core.event_system import publish, Events
 from core.bezier_interpolation import (
@@ -410,10 +410,28 @@ class PlaybackManager:
                     'pulse_max': config['pulse_max']
                 }
         
-        #execute using unified playback system
-        return self.playback_executor.execute_playback(
-            bezier_sequences, servo_configurations, completion_callback
-        )
+        #optional lead-in smoothing from last sent when enabled
+        def _start():
+            return self.playback_executor.execute_playback(
+                bezier_sequences, servo_configurations, completion_callback
+            )
+
+        state = self.sequence_manager.state
+        lead_targets = {}
+        for comp, keyframes in bezier_sequences.items():
+            if keyframes:
+                lead_targets[comp] = int(keyframes[0]['angle'])
+
+        apply, filtered, planned_ms = plan_lead_in(state, self.serial_connection, lead_targets, LEAD_IN_DURATION_MS)
+        if apply and filtered:
+            try:
+                from core.bezier_interpolation import execute_smooth_transition
+                execute_smooth_transition(self.gui_widget, self.serial_connection, state, filtered, planned_ms / 1000.0, log_callback=self.log_callback)
+                self.gui_widget.after(planned_ms, lambda: _start())
+                return True, "lead-in started"
+            except Exception:
+                pass
+        return _start()
     
     #stop sequence playback using unified system
     def stop_playback(self):
@@ -808,8 +826,22 @@ class SequenceRecorderWidget:
         
         #update gui immediately before starting unified playback
         self._update_button_states_for_playing()
-        self.timeline_visualiser.start_playback_animation(self.sequence_manager.get_total_duration())
-        
+
+        #align timeline with optional lead-in
+        sequences = self.sequence_manager.get_sequence_data_for_playback()
+        lead_targets = {}
+        for comp, keyframes in sequences.items():
+            if keyframes:
+                first = keyframes[0]
+                lead_targets[comp] = int(first['angle']) if isinstance(first, dict) else int(first[1])
+
+        apply, filtered, planned_ms = plan_lead_in(self.sequence_manager.state, self.serial_connection, lead_targets, LEAD_IN_DURATION_MS)
+        total_duration = self.sequence_manager.get_total_duration()
+        if apply and filtered:
+            self.frame.after(planned_ms, lambda: self.timeline_visualiser.start_playback_animation(total_duration))
+        else:
+            self.timeline_visualiser.start_playback_animation(total_duration)
+
         #start unified playback
         success, message = self.playback_manager.start_playback(self._on_playback_complete)
         if not success:

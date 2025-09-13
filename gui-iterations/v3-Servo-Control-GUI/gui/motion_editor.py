@@ -10,6 +10,7 @@ from core.bezier_interpolation import (
     bezier_point, control_point_absolute, compute_curve_segment, 
     ensure_control_points, generate_playback_points, execute_smooth_transition
 )
+from core.validation import LEAD_IN_DURATION_MS, is_smoothing_active, plan_lead_in
 
 class MotionEditor:
     #integrated motion editor for servo sequence curve editing using unified bezier format
@@ -326,7 +327,35 @@ class MotionEditor:
         self.fig.canvas.mpl_connect("button_press_event", self._on_mouse_press)
         self.fig.canvas.mpl_connect("button_release_event", self._on_mouse_release)
         self.fig.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
-    
+
+    #apply target positions using realtime smoothing when enabled
+    def _apply_targets_smoothly(self, targets, duration_s=1.0, completion_callback=None):
+        try:
+            if not isinstance(targets, dict) or not targets:
+                return
+            duration_ms = int(max(0, duration_s * 1000))
+            apply, filtered, planned_ms = plan_lead_in(self.state_manager, self.serial_connection, targets, duration_ms)
+            if apply and filtered:
+                execute_smooth_transition(self.window, self.serial_connection, self.state_manager, filtered, planned_ms / 1000.0)
+                if completion_callback:
+                    self.window.after(planned_ms, lambda: completion_callback(True, None))
+                return
+            for comp, val in targets.items():
+                try:
+                    config = self._get_servo_config(comp)
+                    servo_index = config['index']
+                    command = f"SP:{servo_index}:{int(round(val))}"
+                    if self.serial_connection and self.serial_connection.is_connected:
+                        self.serial_connection.send_command(command)
+                    if self.log_callback:
+                        self.log_callback(f"preview: {comp} -> {int(round(val))}")
+                except Exception:
+                    pass
+            if completion_callback:
+                completion_callback(True, None)
+        except Exception:
+            pass
+
     #handle mouse press for element selection
     def _on_mouse_press(self, event):
         if event.inaxes != self.ax or event.button != 1:
@@ -356,9 +385,9 @@ class MotionEditor:
                     self.selected_kf_index = kf_index
                     self._update_angle_display()
                     
-                    #send current position to hardware for preview
+                    #preview current keyframe using smoothing gate
                     current_angle = keyframes[kf_index]['angle']
-                    self._send_position_preview(current_angle)
+                    self._apply_targets_smoothly({self.current_component: int(current_angle)}, duration_s=1.0)
                     
                     element_clicked = True
         
@@ -371,15 +400,14 @@ class MotionEditor:
         if event.button == 1:
             #execute smoothing transition on release for keyframe moves when enabled
             if self.dragging_element and self.dragging_element.get('type') == 'keyframe':
-                if self.state_manager.realtime_smoothing_enabled and self.serial_connection and self.serial_connection.is_connected:
-                    keyframes = self._get_current_sequence()
-                    idx = self.dragging_element['index']
-                    if 0 <= idx < len(keyframes):
-                        target = int(keyframes[idx]['angle'])
-                        last_sent = self.state_manager.get_last_sent(self.current_component)
-                        delta = abs(target - last_sent)
-                        duration = 0.5 if delta <= 50 else 1.0
-                        execute_smooth_transition(self.window, self.serial_connection, self.state_manager, {self.current_component: target}, duration)
+                keyframes = self._get_current_sequence()
+                idx = self.dragging_element['index']
+                if 0 <= idx < len(keyframes):
+                    target = int(keyframes[idx]['angle'])
+                    last_sent = self.state_manager.get_last_sent(self.current_component)
+                    delta = abs(target - last_sent)
+                    duration = 0.5 if delta <= 50 else 1.0
+                    self._apply_targets_smoothly({self.current_component: target}, duration_s=duration)
             self.dragging_element = None
     
     #handle mouse motion for dragging
@@ -612,9 +640,6 @@ class MotionEditor:
             if max_duration <= 0:
                 return
             
-            #start playback animation
-            self._start_playback_animation(max_duration)
-            
             #prepare bezier sequences for unified playback
             bezier_sequences = {}
             for component_name in sequences.keys():
@@ -626,21 +651,37 @@ class MotionEditor:
             for component_name in bezier_sequences.keys():
                 servo_configurations[component_name] = self._get_servo_config(component_name)
             
-            #execute using unified playback system
-            from core.bezier_interpolation import execute_unified_playback
-            success, message = execute_unified_playback(
-                gui_widget=self.window,
-                serial_connection=self.serial_connection,
-                bezier_sequences=bezier_sequences,
-                servo_configurations=servo_configurations,
-                completion_callback=self._on_unified_playback_complete,
-                log_callback=self.log_callback
-            )
-            
-            if not success:
-                self._stop_playback()
-                if self.log_callback:
-                    self.log_callback(f"unified playback failed: {message}")
+            #lead-in smoothing from last sent if enabled
+            def _start_playback(*args):
+                from core.bezier_interpolation import execute_unified_playback
+                success, message = execute_unified_playback(
+                    gui_widget=self.window,
+                    serial_connection=self.serial_connection,
+                    bezier_sequences=bezier_sequences,
+                    servo_configurations=servo_configurations,
+                    completion_callback=self._on_unified_playback_complete,
+                    log_callback=self.log_callback
+                )
+                if not success:
+                    self._stop_playback()
+                    if self.log_callback:
+                        self.log_callback(f"unified playback failed: {message}")
+
+            #decide lead-in and align animation start
+            lead_targets = {}
+            for comp, keyframes in bezier_sequences.items():
+                if keyframes:
+                    lead_targets[comp] = int(keyframes[0]['angle'])
+            apply, filtered, planned_ms = plan_lead_in(self.state_manager, self.serial_connection, lead_targets, LEAD_IN_DURATION_MS)
+
+            def _start_both():
+                self._start_playback_animation(max_duration)
+                _start_playback()
+
+            if apply and filtered:
+                self._apply_targets_smoothly(filtered, duration_s=planned_ms / 1000.0, completion_callback=lambda *_: _start_both())
+            else:
+                _start_both()
             
         except Exception as e:
             if self.log_callback:

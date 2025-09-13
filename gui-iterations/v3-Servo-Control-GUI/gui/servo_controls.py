@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import time
-from core.validation import validate_pulse_width, validate_servo_index, SLIDER_THROTTLE_MS, SMALL_DELTA_PWM, SMOOTH_SHORT_S, SMOOTH_LONG_S
+from core.validation import validate_pulse_width, validate_servo_index, SLIDER_THROTTLE_MS, SMALL_DELTA_PWM, SMOOTH_SHORT_S, SMOOTH_LONG_S, LEAD_IN_DURATION_MS, plan_lead_in
 from core.event_system import subscribe_component, subscribe, unsubscribe, Events
 from core.bezier_interpolation import execute_smooth_transition
 
@@ -156,6 +156,8 @@ class ServoControlWidget:
         target = int(self.pulse_width_var.get())
         last_sent = self.state.get_last_sent(self.component_name)
         delta = abs(target - last_sent)
+        if delta <= 0:
+            return
         duration = SMOOTH_SHORT_S if delta <= SMALL_DELTA_PWM else SMOOTH_LONG_S
         execute_smooth_transition(self.frame, self.serial_connection, self.state, {self.component_name: target}, duration)
     
@@ -180,7 +182,12 @@ class ServoControlWidget:
             return
         
         self.pulse_width_var.set(pulse_width)
-        self._send_servo_command(pulse_width)
+        targets = {self.component_name: pulse_width}
+        apply, filtered, planned_ms = plan_lead_in(self.state, self.serial_connection, targets, LEAD_IN_DURATION_MS)
+        if apply and filtered:
+            execute_smooth_transition(self.frame, self.serial_connection, self.state, filtered, planned_ms / 1000.0)
+        else:
+            self._send_servo_command(pulse_width)
     
     #handle pulse range entry changes
     def _on_range_entry(self, event=None):
@@ -272,8 +279,10 @@ class ServoControlWidget:
         default_pos = self.config["default_position"]
         self.pulse_width_var.set(default_pos)
         #use smoothing for safety when connected
-        if self.serial_connection and self.serial_connection.is_connected:
-            execute_smooth_transition(self.frame, self.serial_connection, self.state, {self.component_name: default_pos}, SMOOTH_LONG_S)
+        targets = {self.component_name: default_pos}
+        apply, filtered, planned_ms = plan_lead_in(self.state, self.serial_connection, targets, int(SMOOTH_LONG_S * 1000))
+        if apply and filtered:
+            execute_smooth_transition(self.frame, self.serial_connection, self.state, filtered, planned_ms / 1000.0)
         else:
             self._send_servo_command(default_pos)
     
