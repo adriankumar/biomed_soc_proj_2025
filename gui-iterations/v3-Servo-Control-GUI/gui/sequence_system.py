@@ -21,6 +21,8 @@ from core.bezier_interpolation import (
     execute_smooth_transition
 )
 from gui.motion_editor import MotionEditor
+from core.idle_loop_manager import IdleLoopManager
+
 
 class SequenceManager:
     #manages sequence data using unified bezier format with preserved user delay intentions
@@ -633,6 +635,15 @@ class SequenceRecorderWidget:
             log_callback=log_callback
         )
         
+        #idle loop manager for automated emote playback
+        self.idle_loop_manager = IdleLoopManager(
+            sequence_manager=sequence_manager,
+            playback_manager=self.playback_manager,
+            state_manager=sequence_manager.state,
+            gui_widget=self.frame,
+            log_callback=log_callback
+        )
+        
         #motion editor window reference
         self.motion_editor_window = None
         
@@ -673,6 +684,9 @@ class SequenceRecorderWidget:
         
         self.clear_button = ttk.Button(control_frame, text="clear", command=self._clear_sequence)
         self.clear_button.pack(side="left", padx=5)
+
+        self.idle_button = ttk.Button(control_frame, text="play idle loop", command=self._toggle_idle_loop)
+        self.idle_button.pack(side="left", padx=5)
 
         #exclude head components toggle
         self.exclude_head_var = tk.BooleanVar(value=False)
@@ -763,6 +777,19 @@ class SequenceRecorderWidget:
         except tk.TclError:
             pass
     
+    #toggle idle loop system
+    def _toggle_idle_loop(self):
+        success, message = self.idle_loop_manager.toggle()
+        
+        if not success:
+            messagebox.showwarning("idle loop", message)
+        
+        if self.log_callback:
+            status = "started" if self.idle_loop_manager.is_active else "stopped"
+            self.log_callback(f"idle loop {status}")
+        
+        self._update_button_states()
+    
     #launch motion editor with unified bezier format
     def _launch_motion_editor(self):
         if not self.sequence_manager.has_keyframes():
@@ -826,22 +853,8 @@ class SequenceRecorderWidget:
         
         #update gui immediately before starting unified playback
         self._update_button_states_for_playing()
-
-        #align timeline with optional lead-in
-        sequences = self.sequence_manager.get_sequence_data_for_playback()
-        lead_targets = {}
-        for comp, keyframes in sequences.items():
-            if keyframes:
-                first = keyframes[0]
-                lead_targets[comp] = int(first['angle']) if isinstance(first, dict) else int(first[1])
-
-        apply, filtered, planned_ms = plan_lead_in(self.sequence_manager.state, self.serial_connection, lead_targets, LEAD_IN_DURATION_MS)
-        total_duration = self.sequence_manager.get_total_duration()
-        if apply and filtered:
-            self.frame.after(planned_ms, lambda: self.timeline_visualiser.start_playback_animation(total_duration))
-        else:
-            self.timeline_visualiser.start_playback_animation(total_duration)
-
+        self.timeline_visualiser.start_playback_animation(self.sequence_manager.get_total_duration())
+        
         #start unified playback
         success, message = self.playback_manager.start_playback(self._on_playback_complete)
         if not success:
@@ -875,6 +888,7 @@ class SequenceRecorderWidget:
         self.edit_delay_button.config(state="disabled")
         self.delay_spinbox.config(state="disabled")
         self.motion_editor_button.config(state="disabled")
+        self.idle_button.config(state="disabled")
 
     #clear sequence preserving delay settings
     def _clear_sequence(self):
@@ -1087,34 +1101,39 @@ class SequenceRecorderWidget:
     def _update_button_states(self):
         has_keyframes = self.sequence_manager.has_keyframes()
         is_playing = self.playback_manager.is_playing()
+        is_idle_active = self.idle_loop_manager.is_active
         has_selection = self.selected_timestamp_ms is not None
         is_connected = self.serial_connection.is_connected
         
         #calculate if selected keyframe can have delay edited
         can_edit_delay = False
-        if has_selection and has_keyframes and not is_playing:
+        if has_selection and has_keyframes and not is_playing and not is_idle_active:
             display_keyframes = self.sequence_manager.get_display_keyframes()
             can_edit_delay = self.selected_step_index < len(display_keyframes) - 1
         
-        self.record_button.config(state="normal" if not is_playing else "disabled")
-        self.play_button.config(state="normal" if has_keyframes and not is_playing and is_connected else "disabled")
+        self.record_button.config(state="normal" if not is_playing and not is_idle_active else "disabled")
+        self.play_button.config(state="normal" if has_keyframes and not is_playing and not is_idle_active and is_connected else "disabled")
         self.stop_button.config(state="normal" if is_playing else "disabled")
-        self.clear_button.config(state="normal" if has_keyframes and not is_playing else "disabled")
+        self.clear_button.config(state="normal" if has_keyframes and not is_playing and not is_idle_active else "disabled")
         
-        self.save_button.config(state="normal" if has_keyframes else "disabled")
-        self.load_button.config(state="normal" if not is_playing else "disabled")
+        self.save_button.config(state="normal" if has_keyframes and not is_idle_active else "disabled")
+        self.load_button.config(state="normal" if not is_playing and not is_idle_active else "disabled")
         
-        self.remove_button.config(state="normal" if has_selection and not is_playing else "disabled")
-        self.preview_button.config(state="normal" if has_selection and not is_playing and is_connected else "disabled")
+        self.remove_button.config(state="normal" if has_selection and not is_playing and not is_idle_active else "disabled")
+        self.preview_button.config(state="normal" if has_selection and not is_playing and not is_idle_active and is_connected else "disabled")
         self.edit_delay_button.config(state="normal" if can_edit_delay else "disabled")
         
-        self.delay_spinbox.config(state="normal" if not is_playing else "disabled")
+        self.delay_spinbox.config(state="normal" if not is_playing and not is_idle_active else "disabled")
 
         #motion editor button
-        self.motion_editor_button.config(state="normal" if has_keyframes and not is_playing else "disabled")
+        self.motion_editor_button.config(state="normal" if has_keyframes and not is_playing and not is_idle_active else "disabled")
 
         #exclude head toggle is only changeable when sequence is empty
-        self.exclude_head_toggle.config(state="normal" if (not has_keyframes and not is_playing) else "disabled")
+        self.exclude_head_toggle.config(state="normal" if (not has_keyframes and not is_playing and not is_idle_active) else "disabled")
+        
+        #idle button
+        idle_text = "stop idle loop" if is_idle_active else "play idle loop"
+        self.idle_button.config(text=idle_text, state="normal" if not is_playing else "disabled")
     
     #widget visibility methods
     def show(self):
@@ -1129,6 +1148,8 @@ class SequenceRecorderWidget:
     
     #cleanup
     def cleanup(self):
+        self.idle_loop_manager.cleanup()
+        
         if self.motion_editor_window:
             try:
                 self.motion_editor_window.window.destroy()
